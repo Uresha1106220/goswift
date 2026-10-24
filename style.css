@@ -495,11 +495,6 @@ body {
     font-family: var(--font-sans) !important;
 }
 
-/* Tactical Dark Tile Filter (Eliminates Carto API Key watermark) */
-.tactical-dark-tiles {
-    filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(90%) !important;
-}
-
 .leaflet-control-layers {
     background: var(--bg-secondary) !important;
     border: 1px solid var(--border-primary) !important;
@@ -1650,12 +1645,199 @@ body.theme-day .hud-round-btn {
 }
 
 /* ============================================================
+   4D / 3D ROAD PERSPECTIVE CANVAS & 360° STREET VIEW
+   ============================================================ */
+.view-4d-canvas {
+    position: fixed;
+    top: 48px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(100% - 48px);
+    z-index: 1030;
+    background: #0a0e17;
+}
+@media (max-width: 900px) {
+    .view-4d-canvas { top: 42px; height: calc(100% - 42px); }
+}
+
+/* Top-Center Camera & Dimension View Switcher */
+.hud-view-switcher {
+    position: absolute;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(18, 22, 32, 0.94);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 28px;
+    padding: 4px;
+    display: flex;
+    gap: 4px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    z-index: 1200;
+}
+body.theme-day .hud-view-switcher {
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.view-switch-btn {
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 180ms ease;
+}
+body.theme-day .view-switch-btn { color: #64748b; }
+.view-switch-btn:hover { color: #ffffff; background: rgba(255, 255, 255, 0.08); }
+body.theme-day .view-switch-btn:hover { color: #0f172a; background: rgba(0, 0, 0, 0.04); }
+.view-switch-btn.active {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #ffffff !important;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.45);
+}
+
+/* 360° Street View Overlay */
+.street-view-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2200;
+    background: #000;
+    display: flex;
+    flex-direction: column;
+}
+.street-view-header {
+    height: 56px;
+    background: rgba(15, 23, 42, 0.95);
+    backdrop-filter: blur(14px);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    z-index: 10;
+}
+.street-view-title-wrap {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.sv-badge {
+    background: linear-gradient(135deg, #2563eb, #0284c7);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    padding: 3px 8px;
+    border-radius: 6px;
+}
+.sv-street-name {
+    font-size: 15px;
+    font-weight: 700;
+    color: #f8fafc;
+}
+.sv-coords {
+    font-size: 11px;
+    color: #94a3b8;
+}
+.street-view-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.btn-sv-tool {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #f8fafc;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition);
+}
+.btn-sv-tool:hover { background: rgba(255, 255, 255, 0.2); }
+.btn-sv-close {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(239, 68, 68, 0.2);
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+}
+.btn-sv-close:hover { background: #ef4444; color: #fff; }
+
+.street-view-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: #000;
+}
+.street-view-canvas {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    display: block;
+}
+.street-view-canvas:active { cursor: grabbing; }
+
+.street-view-compass {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 20px;
+    padding: 6px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    pointer-events: none;
+}
+.compass-dial {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #2563eb;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.drag-hint {
+    font-size: 12px;
+    font-weight: 500;
+    color: #cbd5e1;
+}
+
+/* ============================================================
    PRINT
    ============================================================ */
 @media print {
     .top-bar, .bottom-bar, .left-panel, .right-panel,
     .loading-overlay, .toast-container, .modal, .degraded-banner,
-    .avoid-zones-panel, .nav-hud { display: none !important; }
+    .avoid-zones-panel, .nav-hud, .view-4d-canvas, .street-view-overlay { display: none !important; }
     #map {
         position: static !important;
         width: 100% !important;

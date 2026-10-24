@@ -25,9 +25,9 @@
         ROUTE_COLORS: ['#4CAF50', '#FF9800', '#2196F3'],
         CONFIDENCE_COLORS: { high: '#22c55e', medium: '#eab308', low: '#ef4444' },
         TILE_OSM: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        TILE_ESRI_DARK: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+        TILE_DARK: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
         TILE_TOMTOM: 'https://api.tomtom.com/map/1/tile/basic/main/{z}/{x}/{y}.png?key=z6OWt7WBJOEzT3KDHjlZ3Qln86K0DAx3',
-        TILE_ATTRIBUTION: '&copy; OpenStreetMap &copy; Esri &copy; TomTom'
+        TILE_ATTRIBUTION: '&copy; OpenStreetMap &copy; CARTO &copy; TomTom'
     };
 
     // === SECTION 2: STATE MANAGEMENT ===
@@ -73,7 +73,19 @@
         miniMapPolyline: null,
         miniMapMarker: null,
         hudSignalPhase: 'green',
-        hudSignalTimer: 24
+        hudSignalTimer: 24,
+        viewMode: '2d',
+        weather4D: 'clear',
+        time4D: 'night',
+        streetViewHeading: 45,
+        streetViewPitch: 0,
+        streetViewIndex: 0,
+        streetViewDragging: false,
+        streetViewDragStart: { x: 0, y: 0, heading: 0, pitch: 0 },
+        canvas4D: null,
+        ctx4D: null,
+        raf4D: null,
+        simOffset: 0
     };
 
     // === SECTION 3: API CLIENT ===
@@ -183,31 +195,38 @@
             preferCanvas: true
         });
 
-        // 1. Base Layer: Tactical Dark (Clean dark-mode OSM with CSS filter - zero watermark, 100% free)
-        const darkLayer = L.tileLayer(CONFIG.TILE_OSM, {
-            subdomains: 'abc',
+        // 1. Base Layer: Carto Dark Matter (Tactical Dark)
+        const darkLayer = L.tileLayer(CONFIG.TILE_DARK, {
+            subdomains: 'abcd',
             maxZoom: 19,
-            className: 'tactical-dark-tiles',
-            attribution: '&copy; OpenStreetMap'
+            attribution: '&copy; CARTO &copy; OpenStreetMap'
         });
 
-        // 2. Base Layer: Esri Dark Canvas (Official Dark GIS basemap)
-        const esriDarkLayer = L.tileLayer(CONFIG.TILE_ESRI_DARK, {
-            maxZoom: 16,
-            attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ'
-        });
-
-        // 3. Base Layer: OpenStreetMap Standard (High availability fallback)
+        // 2. Base Layer: OpenStreetMap Standard (High availability fallback)
         const osmLayer = L.tileLayer(CONFIG.TILE_OSM, {
             subdomains: 'abc',
             maxZoom: 19,
             attribution: '&copy; OpenStreetMap'
         });
 
-        // 4. Base Layer: TomTom Real-Time Road Map (Using your live TomTom key)
+        // 3. Base Layer: TomTom Real-Time Road Map (Using your live TomTom key)
         const tomtomLayer = L.tileLayer(CONFIG.TILE_TOMTOM, {
             maxZoom: 19,
             attribution: '&copy; TomTom'
+        });
+
+        // Auto-fallback to OpenStreetMap if Carto tiles have network issues
+        let fallbackDone = false;
+        darkLayer.on('tileerror', function () {
+            if (!fallbackDone && state.map) {
+                fallbackDone = true;
+                console.warn('Switching to standard OSM tiles fallback');
+                if (state.map.hasLayer(darkLayer)) {
+                    state.map.removeLayer(darkLayer);
+                    osmLayer.addTo(state.map);
+                    state.tileLayer = osmLayer;
+                }
+            }
         });
 
         // Add default layer
@@ -217,7 +236,6 @@
         // Leaflet Layer Switcher Control (Top Right)
         const baseMaps = {
             "Tactical Dark": darkLayer,
-            "Esri Dark Canvas": esriDarkLayer,
             "TomTom Live Map": tomtomLayer,
             "Standard OSM": osmLayer
         };
@@ -1796,12 +1814,645 @@
         });
     }
 
+    // === SECTION 17.6: 4D ROAD PERSPECTIVE ENGINE & 360° STREET VIEW ===
+
+    function init4DEngine() {
+        const canvas = document.getElementById('view-4d-canvas');
+        if (!canvas) return;
+        state.canvas4D = canvas;
+        state.ctx4D = canvas.getContext('2d');
+
+        function resizeCanvas() {
+            if (canvas) {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight - (window.innerWidth <= 900 ? 42 : 48);
+            }
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+    }
+
+    function switchViewMode(mode) {
+        state.viewMode = mode;
+        const canvas4D = document.getElementById('view-4d-canvas');
+        const svOverlay = document.getElementById('street-view-overlay');
+        const mapEl = document.getElementById('map');
+
+        document.querySelectorAll('.view-switch-btn').forEach(b => {
+            b.classList.toggle('active', b.dataset.view === mode);
+        });
+
+        if (mode === '2d') {
+            if (canvas4D) canvas4D.style.display = 'none';
+            if (svOverlay) svOverlay.style.display = 'none';
+            if (mapEl) mapEl.style.opacity = '1';
+            stop4DLoop();
+            if (state.map) state.map.invalidateSize();
+            showToast('2D Tactical Map View', 'info', 1500);
+        } else if (mode === '3d') {
+            if (svOverlay) svOverlay.style.display = 'none';
+            if (canvas4D) {
+                canvas4D.style.display = 'block';
+                canvas4D.width = window.innerWidth;
+                canvas4D.height = window.innerHeight - (window.innerWidth <= 900 ? 42 : 48);
+            }
+            start4DLoop();
+            showToast('3D / 4D Perspective Driver View', 'info', 1500);
+        } else if (mode === 'street') {
+            stop4DLoop();
+            if (canvas4D) canvas4D.style.display = 'none';
+            if (svOverlay) svOverlay.style.display = 'flex';
+            initStreetViewPanorama();
+            showToast('360° Panoramic Street View', 'info', 1500);
+        }
+    }
+
+    function toggle4DWeather() {
+        const modes = ['clear', 'rain', 'fog'];
+        const nextIdx = (modes.indexOf(state.weather4D) + 1) % modes.length;
+        state.weather4D = modes[nextIdx];
+
+        const iconEl = document.getElementById('hud-weather-icon');
+        if (iconEl) {
+            if (state.weather4D === 'clear') iconEl.textContent = '☀️';
+            else if (state.weather4D === 'rain') iconEl.textContent = '🌧️';
+            else iconEl.textContent = '🌫️';
+        }
+        showToast('4D Weather: ' + state.weather4D.toUpperCase(), 'info', 1800);
+    }
+
+    // 4D Perspective Road Render Loop
+    function start4DLoop() {
+        if (state.raf4D) return;
+
+        // Rain particle system
+        const raindrops = [];
+        for (let i = 0; i < 120; i++) {
+            raindrops.push({
+                x: Math.random() * window.innerWidth,
+                y: Math.random() * window.innerHeight,
+                len: 12 + Math.random() * 18,
+                speed: 18 + Math.random() * 12
+            });
+        }
+
+        let trafficOffset = 0;
+
+        function loop() {
+            if (state.viewMode !== '3d') {
+                stop4DLoop();
+                return;
+            }
+            render4DScene(raindrops, trafficOffset);
+            trafficOffset += (state.currentSpeed > 0 ? 0.005 : 0.001);
+            state.raf4D = requestAnimationFrame(loop);
+        }
+        state.raf4D = requestAnimationFrame(loop);
+    }
+
+    function stop4DLoop() {
+        if (state.raf4D) {
+            cancelAnimationFrame(state.raf4D);
+            state.raf4D = null;
+        }
+    }
+
+    function render4DScene(raindrops, trafficOffset) {
+        const ctx = state.ctx4D;
+        const canvas = state.canvas4D;
+        if (!ctx || !canvas) return;
+
+        const w = canvas.width;
+        const h = canvas.height;
+        const isDay = state.theme === 'day';
+        const speed = state.currentSpeed || 24;
+
+        state.simOffset = (state.simOffset + (speed * 0.08)) % 100;
+
+        // 1. Sky & Horizon
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, h * 0.45);
+        if (isDay) {
+            skyGrad.addColorStop(0, '#7dd3fc');
+            skyGrad.addColorStop(0.7, '#bae6fd');
+            skyGrad.addColorStop(1, '#e0f2fe');
+        } else {
+            skyGrad.addColorStop(0, '#040711');
+            skyGrad.addColorStop(0.6, '#0b1324');
+            skyGrad.addColorStop(1, '#111e38');
+        }
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, w, h * 0.45);
+
+        // Distant city silhouette
+        ctx.fillStyle = isDay ? '#cbd5e1' : '#090f1d';
+        for (let bx = 0; bx < w; bx += 32) {
+            const bh = 15 + Math.sin(bx * 0.05) * 12 + ((bx % 64 === 0) ? 18 : 0);
+            ctx.fillRect(bx, h * 0.45 - bh, 30, bh);
+        }
+
+        // 2. Ground Terrain & Sidewalks
+        const groundGrad = ctx.createLinearGradient(0, h * 0.45, 0, h);
+        groundGrad.addColorStop(0, isDay ? '#94a3b8' : '#0c1220');
+        groundGrad.addColorStop(1, isDay ? '#64748b' : '#080c16');
+        ctx.fillStyle = groundGrad;
+        ctx.fillRect(0, h * 0.45, w, h * 0.55);
+
+        // Horizon vanishing point
+        const vx = w / 2;
+        const vy = h * 0.45;
+
+        // 3. Road Surface (Asphalt trapezoid)
+        const roadBottomW = Math.min(w * 0.72, 700);
+        const roadTopW = 28;
+
+        ctx.beginPath();
+        ctx.moveTo(vx - roadTopW / 2, vy);
+        ctx.lineTo(vx + roadTopW / 2, vy);
+        ctx.lineTo(vx + roadBottomW / 2, h);
+        ctx.lineTo(vx - roadBottomW / 2, h);
+        ctx.closePath();
+        ctx.fillStyle = isDay ? '#334155' : '#141a29';
+        ctx.fill();
+
+        // 4. Sidewalks & Curb Lines
+        ctx.strokeStyle = isDay ? '#94a3b8' : '#2a3b5c';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(vx - roadTopW / 2, vy);
+        ctx.lineTo(vx - roadBottomW / 2, h);
+        ctx.moveTo(vx + roadTopW / 2, vy);
+        ctx.lineTo(vx + roadBottomW / 2, h);
+        ctx.stroke();
+
+        // 5. Active Guidance Lane Corridor (Vibrant Green Path matching screenshot)
+        ctx.beginPath();
+        const navTopW = roadTopW * 0.35;
+        const navBotW = roadBottomW * 0.28;
+        const navCenterX = vx - (roadBottomW * 0.12);
+        ctx.moveTo(vx - navTopW / 2, vy);
+        ctx.lineTo(vx + navTopW / 2, vy);
+        ctx.lineTo(navCenterX + navBotW / 2, h);
+        ctx.lineTo(navCenterX - navBotW / 2, h);
+        ctx.closePath();
+
+        const pathColor = state.hudSignalPhase === 'red' ? '#ef4444' : '#22c55e';
+        ctx.fillStyle = isDay ? 'rgba(34, 197, 94, 0.45)' : 'rgba(16, 185, 129, 0.55)';
+        ctx.fill();
+        ctx.strokeStyle = pathColor;
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        // 6. Dashed Moving Lane Stripes
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([18, 16]);
+        ctx.lineDashOffset = -state.simOffset;
+
+        ctx.beginPath();
+        ctx.moveTo(vx, vy);
+        ctx.lineTo(vx, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 7. Pedestrian Crosswalk (Зебра)
+        const crossY = h * 0.68;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        for (let i = -5; i <= 5; i++) {
+            ctx.fillRect(vx + (i * 24) - 8, crossY, 14, 12);
+        }
+
+        // 8. 3D Extruded Buildings (Matching Screenshot)
+        // Left Building 1 (24 к1 / N-clinic)
+        render3DBuilding(ctx, vx - (roadBottomW * 0.55), h * 0.88, 110, 190, '24 к1', isDay);
+        render3DBuilding(ctx, vx - (roadBottomW * 0.75), h * 0.65, 80, 150, 'N-clinic', isDay);
+
+        // Right Building 1 (VkusVill / 20/1 / 18)
+        render3DBuilding(ctx, vx + (roadBottomW * 0.54), h * 0.86, 115, 200, '20/1', isDay);
+        render3DBuilding(ctx, vx + (roadBottomW * 0.74), h * 0.64, 85, 160, '18', isDay);
+
+        // 9. Roadside 3D Trees
+        render3DTree(ctx, vx - (roadBottomW * 0.45), h * 0.78, 28, isDay);
+        render3DTree(ctx, vx - (roadBottomW * 0.42), h * 0.62, 20, isDay);
+        render3DTree(ctx, vx + (roadBottomW * 0.45), h * 0.74, 26, isDay);
+
+        // 10. Roadside Traffic Light Pole & Countdown Marker (Right side of road)
+        const tlX = vx + (roadBottomW * 0.28);
+        const tlY = h * 0.62;
+        renderRoadTrafficSignal(ctx, tlX, tlY, state.hudSignalTimer, state.hudSignalPhase, isDay);
+
+        // 11. 3D Red Vehicle Follow-Cam (Foreground)
+        render3DCarForeground(ctx, navCenterX, h * 0.84, isDay);
+
+        // 12. 4D Weather: Rain Effect
+        if (state.weather4D === 'rain') {
+            ctx.strokeStyle = 'rgba(186, 230, 253, 0.65)';
+            ctx.lineWidth = 1.5;
+            raindrops.forEach(drop => {
+                ctx.beginPath();
+                ctx.moveTo(drop.x, drop.y);
+                ctx.lineTo(drop.x - 3, drop.y + drop.len);
+                ctx.stroke();
+
+                drop.y += drop.speed;
+                drop.x -= 1.5;
+                if (drop.y > h) {
+                    drop.y = -10;
+                    drop.x = Math.random() * w;
+                }
+            });
+        }
+    }
+
+    function render3DBuilding(ctx, x, y, bw, bh, label, isDay) {
+        // Base shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        ctx.fillRect(x - 5, y - bh + 5, bw + 10, bh + 5);
+
+        // Front wall
+        ctx.fillStyle = isDay ? '#f8fafc' : '#1e293b';
+        ctx.fillRect(x, y - bh, bw, bh);
+
+        // Side perspective wall
+        ctx.fillStyle = isDay ? '#e2e8f0' : '#0f172a';
+        ctx.beginPath();
+        ctx.moveTo(x + bw, y - bh);
+        ctx.lineTo(x + bw + 20, y - bh - 15);
+        ctx.lineTo(x + bw + 20, y - 15);
+        ctx.lineTo(x + bw, y);
+        ctx.closePath();
+        ctx.fill();
+
+        // Roof
+        ctx.fillStyle = isDay ? '#cbd5e1' : '#334155';
+        ctx.beginPath();
+        ctx.moveTo(x, y - bh);
+        ctx.lineTo(x + 20, y - bh - 15);
+        ctx.lineTo(x + bw + 20, y - bh - 15);
+        ctx.lineTo(x + bw, y - bh);
+        ctx.closePath();
+        ctx.fill();
+
+        // Building Label
+        ctx.fillStyle = isDay ? '#475569' : '#94a3b8';
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, x + bw / 2, y - bh + 22);
+
+        // Windows
+        const winColor = isDay ? '#93c5fd' : (label.includes('1') ? '#fbbf24' : '#38bdf8');
+        ctx.fillStyle = winColor;
+        for (let wy = y - bh + 36; wy < y - 15; wy += 22) {
+            for (let wx = x + 12; wx < x + bw - 15; wx += 20) {
+                ctx.fillRect(wx, wy, 10, 12);
+            }
+        }
+    }
+
+    function render3DTree(ctx, x, y, r, isDay) {
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.beginPath();
+        ctx.ellipse(x, y, r, r * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Trunk
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(x - 3, y - r * 1.4, 6, r * 1.4);
+
+        // Foliage
+        ctx.fillStyle = isDay ? '#22c55e' : '#15803d';
+        ctx.beginPath();
+        ctx.arc(x, y - r * 1.6, r, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    function renderRoadTrafficSignal(ctx, x, y, timer, phase, isDay) {
+        const isGreen = phase === 'green';
+        // Post
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(x - 2, y, 4, 38);
+
+        // Housing
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#334155';
+        ctx.lineWidth = 2;
+        ctx.fillRect(x - 8, y - 40, 16, 40);
+        ctx.strokeRect(x - 8, y - 40, 16, 40);
+
+        // Bulbs
+        ctx.fillStyle = !isGreen ? '#ef4444' : '#334155';
+        ctx.beginPath(); ctx.arc(x, y - 32, 4, 0, Math.PI * 2); ctx.fill();
+
+        ctx.fillStyle = '#334155';
+        ctx.beginPath(); ctx.arc(x, y - 20, 4, 0, Math.PI * 2); ctx.fill();
+
+        ctx.fillStyle = isGreen ? '#22c55e' : '#334155';
+        ctx.beginPath(); ctx.arc(x, y - 8, 4, 0, Math.PI * 2); ctx.fill();
+
+        // Floating Pill with countdown & lane guidance
+        const pillW = 86;
+        const pillH = 26;
+        const px = x - pillW / 2;
+        const py = y - 72;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.roundRect(px, py, pillW, pillH, 13);
+        ctx.fill();
+        ctx.stroke();
+
+        // Timer badge
+        ctx.fillStyle = isGreen ? '#22c55e' : '#ef4444';
+        ctx.beginPath();
+        ctx.arc(px + 14, py + 13, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(timer, px + 14, py + 16.5);
+
+        // Lane arrows
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText('↑', px + 34, py + 17);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('↑', px + 48, py + 17);
+        ctx.fillStyle = '#64748b';
+        ctx.fillText('↑', px + 62, py + 17);
+        ctx.fillText('↱', px + 75, py + 17);
+    }
+
+    function render3DCarForeground(ctx, x, y, isDay) {
+        // Shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(x, y + 25, 34, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Headlight Beams (Night mode)
+        if (!isDay) {
+            const beamGrad = ctx.createLinearGradient(x, y, x, y - 180);
+            beamGrad.addColorStop(0, 'rgba(254, 240, 138, 0.35)');
+            beamGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
+            ctx.fillStyle = beamGrad;
+            ctx.beginPath();
+            ctx.moveTo(x - 22, y - 20);
+            ctx.lineTo(x - 90, y - 200);
+            ctx.lineTo(x + 90, y - 200);
+            ctx.lineTo(x + 22, y - 20);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // Car Body
+        const cw = 54;
+        const ch = 84;
+        const cx = x - cw / 2;
+        const cy = y - ch / 2;
+
+        ctx.fillStyle = '#b91c1c';
+        ctx.beginPath();
+        ctx.roundRect(cx, cy, cw, ch, 14);
+        ctx.fill();
+
+        ctx.fillStyle = '#dc2626';
+        ctx.beginPath();
+        ctx.roundRect(cx + 3, cy + 4, cw - 6, ch - 8, 12);
+        ctx.fill();
+
+        // Roof & Cabin
+        ctx.fillStyle = '#7f1d1d';
+        ctx.beginPath();
+        ctx.roundRect(cx + 8, cy + 22, cw - 16, 40, 8);
+        ctx.fill();
+
+        // Rear window
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.roundRect(cx + 10, cy + 44, cw - 20, 14, 4);
+        ctx.fill();
+
+        // Front windshield
+        ctx.fillStyle = '#0f172a';
+        ctx.beginPath();
+        ctx.roundRect(cx + 10, cy + 24, cw - 20, 12, 4);
+        ctx.fill();
+
+        // Taillights
+        ctx.fillStyle = '#ef4444';
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = 10;
+        ctx.fillRect(cx + 4, cy + ch - 8, 12, 4);
+        ctx.fillRect(cx + cw - 16, cy + ch - 8, 12, 4);
+        ctx.shadowBlur = 0;
+    }
+
+    // 360° Street View Engine
+    function initStreetViewPanorama() {
+        const canvas = document.getElementById('street-view-canvas');
+        if (!canvas) return;
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight - 56;
+
+        const streetNameEl = document.getElementById('sv-street-name');
+        const coordsEl = document.getElementById('sv-coords');
+
+        const curPt = state.origin || { lat: 28.6139, lng: 77.2090, label: 'Tsvetnoy Boulevard' };
+        if (streetNameEl) streetNameEl.textContent = curPt.label || 'Tsvetnoy Boulevard';
+        if (coordsEl) coordsEl.textContent = `${curPt.lat.toFixed(5)}, ${curPt.lng.toFixed(5)}`;
+
+        renderStreetViewPanorama();
+
+        // Mouse & Touch 360 Drag Controls
+        canvas.onmousedown = (e) => {
+            state.streetViewDragging = true;
+            state.streetViewDragStart = { x: e.clientX, y: e.clientY, heading: state.streetViewHeading, pitch: state.streetViewPitch };
+        };
+
+        window.onmousemove = (e) => {
+            if (!state.streetViewDragging) return;
+            const dx = e.clientX - state.streetViewDragStart.x;
+            const dy = e.clientY - state.streetViewDragStart.y;
+            state.streetViewHeading = (state.streetViewDragStart.heading - dx * 0.3 + 360) % 360;
+            state.streetViewPitch = Math.max(-45, Math.min(45, state.streetViewDragStart.pitch + dy * 0.25));
+
+            const compass = document.getElementById('sv-compass-dial');
+            if (compass) compass.style.transform = `rotate(${-state.streetViewHeading}deg)`;
+
+            renderStreetViewPanorama();
+        };
+
+        window.onmouseup = () => { state.streetViewDragging = false; };
+
+        // Touch support
+        canvas.ontouchstart = (e) => {
+            if (e.touches.length === 1) {
+                state.streetViewDragging = true;
+                state.streetViewDragStart = {
+                    x: e.touches[0].clientX, y: e.touches[0].clientY,
+                    heading: state.streetViewHeading, pitch: state.streetViewPitch
+                };
+            }
+        };
+        window.ontouchmove = (e) => {
+            if (!state.streetViewDragging || e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - state.streetViewDragStart.x;
+            const dy = e.touches[0].clientY - state.streetViewDragStart.y;
+            state.streetViewHeading = (state.streetViewDragStart.heading - dx * 0.3 + 360) % 360;
+            state.streetViewPitch = Math.max(-45, Math.min(45, state.streetViewDragStart.pitch + dy * 0.25));
+            renderStreetViewPanorama();
+        };
+        window.ontouchend = () => { state.streetViewDragging = false; };
+    }
+
+    function renderStreetViewPanorama() {
+        const canvas = document.getElementById('street-view-canvas');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const w = canvas.width;
+        const h = canvas.height;
+
+        const heading = state.streetViewHeading;
+        const pitch = state.streetViewPitch;
+        const horizonY = (h / 2) + (pitch * 4);
+
+        // 1. 360 Sky Dome
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+        skyGrad.addColorStop(0, '#0284c7');
+        skyGrad.addColorStop(0.7, '#7dd3fc');
+        skyGrad.addColorStop(1, '#e0f2fe');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, w, horizonY);
+
+        // Clouds & Sun
+        const sunX = ((heading + 90) % 360) * (w / 360);
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.85)';
+        ctx.beginPath();
+        ctx.arc(sunX, horizonY * 0.4, 26, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. 360 Street Floor & Asphalt
+        const roadGrad = ctx.createLinearGradient(0, horizonY, 0, h);
+        roadGrad.addColorStop(0, '#64748b');
+        roadGrad.addColorStop(0.2, '#334155');
+        roadGrad.addColorStop(1, '#1e293b');
+        ctx.fillStyle = roadGrad;
+        ctx.fillRect(0, horizonY, w, h - horizonY);
+
+        // Perspective Road Markings in 360 Panorama
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([24, 20]);
+        ctx.beginPath();
+        ctx.moveTo(w / 2, horizonY);
+        ctx.lineTo(w / 2, h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 3. 360 Panorama Cityscape Facades (Equirectangular Cylindrical projection)
+        const buildingCount = 12;
+        const colW = w / 6;
+
+        for (let i = 0; i < buildingCount; i++) {
+            const bAngle = (i * (360 / buildingCount));
+            const angleDiff = ((bAngle - heading + 540) % 360) - 180;
+            const bx = (w / 2) + (angleDiff * (w / 120));
+
+            if (bx > -colW && bx < w + colW) {
+                const bh = 140 + Math.sin(i * 3) * 60;
+                // Building Wall
+                ctx.fillStyle = (i % 2 === 0) ? '#e2e8f0' : '#cbd5e1';
+                ctx.fillRect(bx - colW / 2, horizonY - bh, colW - 6, bh);
+
+                // Shopfront / Store sign
+                ctx.fillStyle = (i % 3 === 0) ? '#2563eb' : (i % 3 === 1 ? '#16a34a' : '#ea580c');
+                ctx.fillRect(bx - colW / 2 + 6, horizonY - 45, colW - 18, 16);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 9px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText(i % 2 === 0 ? 'STORE' : 'CAFE', bx, horizonY - 33);
+
+                // Windows
+                ctx.fillStyle = '#94a3b8';
+                for (let wy = horizonY - bh + 20; wy < horizonY - 55; wy += 22) {
+                    for (let wx = bx - colW / 2 + 10; wx < bx + colW / 2 - 15; wx += 16) {
+                        ctx.fillRect(wx, wy, 10, 14);
+                    }
+                }
+            }
+        }
+
+        // 4. Street Trees & Lamp Posts
+        for (let i = 0; i < 8; i++) {
+            const tAngle = (i * 45);
+            const diff = ((tAngle - heading + 540) % 360) - 180;
+            const tx = (w / 2) + (diff * (w / 120));
+            if (tx > -30 && tx < w + 30) {
+                // Tree
+                ctx.fillStyle = '#15803d';
+                ctx.beginPath();
+                ctx.arc(tx, horizonY - 25, 24, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#78350f';
+                ctx.fillRect(tx - 3, horizonY - 8, 6, 18);
+            }
+        }
+    }
+
+    function setupViewControls() {
+        // Mode Switcher buttons
+        document.querySelectorAll('.view-switch-btn').forEach(btn => {
+            btn.addEventListener('click', () => switchViewMode(btn.dataset.view));
+        });
+
+        // Weather toggle button
+        document.getElementById('btn-hud-weather')?.addEventListener('click', toggle4DWeather);
+
+        // Street View header actions
+        document.getElementById('btn-sv-close')?.addEventListener('click', () => switchViewMode('2d'));
+
+        document.getElementById('btn-sv-step-next')?.addEventListener('click', () => {
+            if (state.routes.length) {
+                const route = state.routes[0];
+                const allCoords = route.segments.flatMap(s => s.coords);
+                state.streetViewIndex = Math.min(allCoords.length - 1, state.streetViewIndex + 2);
+                const pt = allCoords[state.streetViewIndex];
+                if (pt) {
+                    state.origin = { lat: pt[0], lng: pt[1], label: route.name || 'En Route' };
+                    initStreetViewPanorama();
+                }
+            }
+        });
+
+        document.getElementById('btn-sv-step-prev')?.addEventListener('click', () => {
+            if (state.routes.length) {
+                const route = state.routes[0];
+                const allCoords = route.segments.flatMap(s => s.coords);
+                state.streetViewIndex = Math.max(0, state.streetViewIndex - 2);
+                const pt = allCoords[state.streetViewIndex];
+                if (pt) {
+                    state.origin = { lat: pt[0], lng: pt[1], label: route.name || 'En Route' };
+                    initStreetViewPanorama();
+                }
+            }
+        });
+
+        document.getElementById('btn-sv-open-external')?.addEventListener('click', () => {
+            const curPt = state.origin || { lat: 28.6139, lng: 77.2090 };
+            const url = `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${curPt.lat},${curPt.lng}`;
+            window.open(url, '_blank');
+        });
+    }
+
     function initHUD() {
         updateSpeedometer(24);
     }
 
     function setupEventListeners() {
         setupMobileDrawers();
+        setupViewControls();
         // Calculate route
         const btnCalc = document.getElementById('btn-calculate');
         if (btnCalc) btnCalc.addEventListener('click', handleCalculateRoute);
@@ -1895,12 +2546,10 @@
             if (state.tileLayer) state.map.removeLayer(state.tileLayer);
             if (val === 'standard') {
                 state.tileLayer = L.tileLayer(CONFIG.TILE_OSM, { subdomains: 'abc', maxZoom: 19 }).addTo(state.map);
-            } else if (val === 'esri') {
-                state.tileLayer = L.tileLayer(CONFIG.TILE_ESRI_DARK, { maxZoom: 16 }).addTo(state.map);
             } else if (val === 'tomtom') {
                 state.tileLayer = L.tileLayer(CONFIG.TILE_TOMTOM, { maxZoom: 19 }).addTo(state.map);
             } else {
-                state.tileLayer = L.tileLayer(CONFIG.TILE_OSM, { subdomains: 'abc', maxZoom: 19, className: 'tactical-dark-tiles' }).addTo(state.map);
+                state.tileLayer = L.tileLayer(CONFIG.TILE_DARK, { subdomains: 'abcd', maxZoom: 19 }).addTo(state.map);
             }
         });
 
@@ -1997,6 +2646,7 @@
         setupEventListeners();
         setupAutoRefresh();
         initHUD();
+        init4DEngine();
 
         console.log('%c◉ GoSwift v1.0 Initialized', 'color: #3b82f6; font-weight: bold; font-size: 14px;');
     }
