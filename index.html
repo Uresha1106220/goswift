@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GoSwift — Defense-Grade Traffic Intelligence</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- App Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- ==================== DEGRADED MODE BANNER ==================== -->
+    <div id="degraded-banner" class="degraded-banner">
+        <span>⚠ Live data unavailable — showing historical estimates</span>
+    </div>
+
+    <!-- ==================== TOP BAR ==================== -->
+    <header class="top-bar">
+        <div class="top-bar-left">
+            <span class="logo">◉ GoSwift</span>
+            <span class="version-badge">v1.0</span>
+        </div>
+        <div class="top-bar-center">
+            <span id="system-status-dot" class="status-dot status-operational"></span>
+            <span id="system-status-text" class="status-text">OPERATIONAL</span>
+        </div>
+        <div class="top-bar-right">
+            <button id="btn-toggle-hud" class="btn-top-hud" title="Toggle In-Car Navigation HUD">🚗 HUD</button>
+            <button id="btn-toggle-daynight" class="btn-icon" title="Toggle Day/Night Mode">🌓</button>
+            <span id="clock-display" class="clock">00:00:00</span>
+            <button id="btn-offline-toggle" class="btn-icon" title="Toggle Offline Mode">
+                <span class="icon-offline">📡</span>
+            </button>
+            <button id="btn-settings" class="btn-icon" title="Settings">⚙</button>
+            <div class="user-badge" id="user-badge">
+                <span class="user-role" id="user-role">OP</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ==================== LEFT PANEL ==================== -->
+    <aside id="left-panel" class="left-panel">
+        <button id="btn-collapse-left" class="panel-collapse-btn collapse-left" title="Collapse">◂</button>
+
+        <div class="panel-content">
+            <!-- Origin -->
+            <div class="form-group search-group">
+                <label class="form-label">ORIGIN</label>
+                <div class="input-group">
+                    <input type="text" id="input-origin" class="form-input" placeholder="Enter place name or click map" autocomplete="off">
+                    <button id="btn-geocode-origin" class="btn-icon-input" title="Search Place">🔍</button>
+                    <button id="btn-locate-origin" class="btn-icon-input" title="Current Location">📍</button>
+                </div>
+                <div id="origin-suggestions" class="suggestions-dropdown" style="display:none;"></div>
+            </div>
+
+            <!-- Swap -->
+            <div class="swap-row">
+                <button id="btn-swap" class="btn-swap" title="Swap origin and destination">⇅</button>
+            </div>
+
+            <!-- Destination -->
+            <div class="form-group search-group">
+                <label class="form-label">DESTINATION</label>
+                <div class="input-group">
+                    <input type="text" id="input-destination" class="form-input" placeholder="Enter place name or click map" autocomplete="off">
+                    <button id="btn-geocode-dest" class="btn-icon-input" title="Search Place">🔍</button>
+                </div>
+                <div id="destination-suggestions" class="suggestions-dropdown" style="display:none;"></div>
+            </div>
+
+            <!-- Departure -->
+            <div class="form-group">
+                <label class="form-label">DEPARTURE</label>
+                <div class="radio-group">
+                    <label class="radio-option">
+                        <input type="radio" name="depart-mode" value="now" checked> Depart Now
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="depart-mode" value="at"> Depart At
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="depart-mode" value="arrive"> Arrive By
+                    </label>
+                </div>
+                <input type="datetime-local" id="input-datetime" class="form-input datetime-input" style="display:none;">
+            </div>
+
+            <!-- Mode -->
+            <div class="form-group">
+                <label class="form-label">MODE</label>
+                <div class="toggle-group">
+                    <button class="toggle-btn active" data-mode="car">🚗 Car</button>
+                    <button class="toggle-btn" data-mode="convoy">🚛 Convoy</button>
+                </div>
+            </div>
+
+            <!-- Convoy Options (hidden by default) -->
+            <div id="convoy-options" class="form-group" style="display:none;">
+                <label class="form-label">CONVOY SETTINGS</label>
+                <div class="convoy-inputs">
+                    <div class="mini-input-group">
+                        <label>Vehicles</label>
+                        <input type="number" id="input-convoy-count" class="form-input mini" value="3" min="2" max="20">
+                    </div>
+                    <div class="mini-input-group">
+                        <label>Separation (min)</label>
+                        <input type="number" id="input-convoy-sep" class="form-input mini" value="5" min="1" max="30">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Options (collapsible) -->
+            <div class="form-group">
+                <button id="btn-toggle-options" class="section-toggle">▸ Options</button>
+                <div id="options-section" class="options-section" style="display:none;">
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="opt-alternatives" checked> Show alternatives
+                    </label>
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="opt-diversity"> Route diversity mode
+                    </label>
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="opt-signals" checked> Show signal overlay
+                    </label>
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="opt-incidents" checked> Show incidents
+                    </label>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button id="btn-calculate" class="btn btn-primary btn-large">
+                    <span class="btn-text">CALCULATE ROUTE</span>
+                    <span class="btn-spinner" style="display:none;"></span>
+                </button>
+                <button id="btn-departures" class="btn btn-secondary">ANALYZE DEPARTURES</button>
+            </div>
+
+            <!-- Route Cards -->
+            <div class="section-divider">
+                <span>ROUTES</span>
+            </div>
+            <div id="route-cards" class="route-cards-container">
+                <div class="empty-state">
+                    <span class="empty-icon">🗺️</span>
+                    <p>Set origin & destination, then calculate a route</p>
+                </div>
+            </div>
+
+            <!-- Convoy Plan -->
+            <div id="convoy-plan" class="convoy-plan" style="display:none;">
+                <div class="section-divider"><span>CONVOY PLAN</span></div>
+                <table class="convoy-table">
+                    <thead>
+                        <tr>
+                            <th>CALLSIGN</th>
+                            <th>DEPART</th>
+                            <th>ETA P50</th>
+                            <th>ETA P90</th>
+                        </tr>
+                    </thead>
+                    <tbody id="convoy-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ==================== MAP ==================== -->
+    <div id="map"></div>
+
+    <!-- Mobile Drawer Backdrop -->
+    <div id="mobile-backdrop" class="mobile-backdrop" style="display:none;"></div>
+
+    <!-- ==================== MOBILE / IN-CAR NAVIGATION HUD ==================== -->
+    <div id="nav-hud" class="nav-hud">
+        <!-- Top-Left Maneuver Card -->
+        <div id="hud-turn-card" class="hud-card hud-turn-card">
+            <div class="hud-turn-icon-wrap">
+                <span class="hud-turn-icon" id="hud-turn-icon">↰</span>
+            </div>
+            <div class="hud-turn-text">
+                <div class="hud-turn-dist" id="hud-turn-dist">1.1 <span class="unit">km</span></div>
+                <div class="hud-turn-street" id="hud-turn-street">Durova St</div>
+            </div>
+        </div>
+
+        <!-- Top-Right Speedometer & Speed Limit Card -->
+        <div id="hud-speed-card" class="hud-card hud-speed-card">
+            <div class="hud-speed-gauge-wrap">
+                <svg class="hud-speed-gauge-svg" viewBox="0 0 76 76">
+                    <circle class="hud-speed-track" cx="38" cy="38" r="32" />
+                    <circle class="hud-speed-bar" id="hud-speed-bar" cx="38" cy="38" r="32" />
+                </svg>
+                <div class="hud-speed-center">
+                    <div class="hud-speed-val" id="hud-speed-val">24</div>
+                </div>
+                <div class="hud-speed-cam-badge" title="Enforcement Alert">
+                    <span class="hud-cam-icon">📷</span>
+                </div>
+            </div>
+            <div class="hud-speed-limit-sign" id="hud-speed-limit-sign">
+                <span>50</span>
+            </div>
+        </div>
+
+        <!-- Center Roadside Signal & Lane Guidance Floating Pill -->
+        <div id="hud-signal-lane-pill" class="hud-signal-lane-pill">
+            <div class="hud-signal-circle green" id="hud-signal-circle">24</div>
+            <div class="hud-lanes" id="hud-lanes">
+                <span class="hud-lane">↑</span>
+                <span class="hud-lane active">↑</span>
+                <span class="hud-lane">↑</span>
+                <span class="hud-lane">↱</span>
+            </div>
+        </div>
+
+        <!-- Bottom-Left Circular Mini-Map Radar -->
+        <div id="hud-minimap-card" class="hud-minimap-card" title="Radar Overview">
+            <div id="hud-minimap" class="hud-minimap-inner"></div>
+            <div class="hud-minimap-marker"></div>
+        </div>
+
+        <!-- Current Street Name Pill (Above Bottom Dock) -->
+        <div id="hud-current-street" class="hud-current-street">
+            <span id="hud-current-street-name">Tsvetnoy Boulevard</span>
+        </div>
+
+        <!-- Bottom Navigation Floating Dock -->
+        <div class="hud-bottom-dock">
+            <button id="btn-hud-search" class="hud-dock-btn" title="Search Destination / Origin">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+            </button>
+
+            <div class="hud-dock-stats" id="btn-hud-start-nav" title="Click to Start/Pause Simulation">
+                <div class="hud-stat-col">
+                    <div class="hud-stat-val" id="hud-stat-time">4</div>
+                    <div class="hud-stat-lbl">min</div>
+                </div>
+                <div class="hud-stat-col hud-stat-arrival">
+                    <div class="hud-stat-val" id="hud-stat-arrival">16:16</div>
+                    <div class="hud-stat-lbl">arrival</div>
+                </div>
+                <div class="hud-stat-col">
+                    <div class="hud-stat-val" id="hud-stat-dist">1.6</div>
+                    <div class="hud-stat-lbl">km</div>
+                </div>
+            </div>
+
+            <button id="btn-hud-menu" class="hud-dock-btn" title="Tactical Intel & Alternatives">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="3" y1="12" x2="21" y2="12"></line>
+                    <line x1="3" y1="6" x2="21" y2="6"></line>
+                    <line x1="3" y1="18" x2="21" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Quick Floating Theme & Drive Controls -->
+        <div class="hud-floating-controls">
+            <button id="btn-hud-theme" class="hud-round-btn" title="Toggle Day / Night Mode">
+                <span id="hud-theme-icon">🌙</span>
+            </button>
+            <button id="btn-hud-drive" class="hud-round-btn btn-drive" title="Start Drive Simulation">
+                <span id="hud-drive-icon">▶</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ==================== RIGHT PANEL ==================== -->
+    <aside id="right-panel" class="right-panel">
+        <button id="btn-collapse-right" class="panel-collapse-btn collapse-right" title="Collapse">▸</button>
+
+        <!-- Tabs -->
+        <div class="tab-bar">
+            <button class="tab-btn active" data-tab="signals">Signals</button>
+            <button class="tab-btn" data-tab="departures">Departures</button>
+            <button class="tab-btn" data-tab="incidents">Incidents</button>
+            <button class="tab-btn" data-tab="status">Status</button>
+        </div>
+
+        <!-- Signals Tab -->
+        <div id="tab-signals" class="tab-content active">
+            <div id="green-wave-box" class="green-wave-box">
+                <span class="green-wave-icon">🌊</span>
+                <span class="green-wave-text">No green wave data</span>
+            </div>
+            <div id="signal-strip" class="signal-strip">
+                <div class="empty-state small">
+                    <p>Calculate a route to see signals</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Departures Tab -->
+        <div id="tab-departures" class="tab-content">
+            <div class="chart-container">
+                <canvas id="departure-chart"></canvas>
+            </div>
+            <div id="depart-recommendation" class="recommendation-card">
+                <div class="empty-state small">
+                    <p>Click "Analyze Departures" to see optimal timing</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Incidents Tab -->
+        <div id="tab-incidents" class="tab-content">
+            <div id="incident-list" class="incident-list">
+                <div class="empty-state small">
+                    <p>No incidents loaded</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Tab -->
+        <div id="tab-status" class="tab-content">
+            <div class="status-section">
+                <h3 class="status-title">System Health</h3>
+                <div id="status-health" class="status-card">
+                    <div class="status-row">
+                        <span class="status-label">Status</span>
+                        <span id="status-val" class="status-value status-ok">OPERATIONAL</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Version</span>
+                        <span class="status-value mono">v1.0.0</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Uptime</span>
+                        <span id="status-uptime" class="status-value mono">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Mode</span>
+                        <span id="status-mode" class="status-value">Online</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-section">
+                <h3 class="status-title">Data Sources</h3>
+                <div id="status-sources" class="status-card">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+
+            <div class="status-section">
+                <h3 class="status-title">Database</h3>
+                <div id="status-db" class="status-card">
+                    <div class="status-row">
+                        <span class="status-label">Size</span>
+                        <span id="db-size" class="status-value mono">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">History</span>
+                        <span id="db-history" class="status-value mono">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Samples</span>
+                        <span id="db-samples" class="status-value mono">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Segments</span>
+                        <span id="db-segments" class="status-value mono">—</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-section">
+                <h3 class="status-title">Collector</h3>
+                <div id="status-collector" class="status-card">
+                    <div class="status-row">
+                        <span class="status-label">Active</span>
+                        <span id="coll-active" class="status-value">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Last Run</span>
+                        <span id="coll-last" class="status-value mono">—</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Segments</span>
+                        <span id="coll-segments" class="status-value mono">—</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ==================== BOTTOM BAR ==================== -->
+    <footer class="bottom-bar">
+        <div class="bottom-left">
+            <span id="bottom-confidence" class="confidence-pill confidence-low">DATA CONFIDENCE: —</span>
+        </div>
+        <div class="bottom-center">
+            <span id="bottom-source" class="bottom-text">Source: — | Last update: —</span>
+        </div>
+        <div class="bottom-right">
+            <span id="bottom-coords" class="bottom-coords mono">—, —</span>
+            <span id="bottom-zoom" class="bottom-zoom mono">Z12</span>
+        </div>
+    </footer>
+
+    <!-- ==================== LOGIN MODAL ==================== -->
+    <div id="login-modal" class="modal" style="display:none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2>◉ GoSwift Login</h2>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">USERNAME</label>
+                    <input type="text" id="login-username" class="form-input" placeholder="Enter username" value="admin">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">PASSWORD</label>
+                    <input type="password" id="login-password" class="form-input" placeholder="Enter password" value="goswift">
+                </div>
+                <div id="login-error" class="form-error" style="display:none;"></div>
+                <button id="btn-login" class="btn btn-primary btn-large">LOGIN</button>
+            </div>
+            <div class="modal-footer">
+                <span class="modal-note">Default: admin / goswift</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== SETTINGS MODAL ==================== -->
+    <div id="settings-modal" class="modal" style="display:none;">
+        <div class="modal-overlay"></div>
+        <div class="modal-box">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button id="btn-close-settings" class="btn-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">MAP THEME</label>
+                    <select id="select-map-theme" class="form-input">
+                        <option value="dark">Tactical Dark</option>
+                        <option value="esri">Esri Dark Canvas</option>
+                        <option value="tomtom">TomTom Live Map</option>
+                        <option value="standard">Standard OSM</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="checkbox-option">
+                        <input type="checkbox" id="opt-tactical"> Tactical Mode (High Visibility)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">AUTO-REFRESH (seconds)</label>
+                    <input type="number" id="input-refresh-interval" class="form-input" value="60" min="10" max="600">
+                </div>
+                <button id="btn-logout" class="btn btn-danger">LOGOUT</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== AVOID ZONES PANEL ==================== -->
+    <div id="avoid-zones-panel" class="avoid-zones-panel" style="display:none;">
+        <div class="avoid-panel-header">
+            <h3>Avoid Zones</h3>
+            <button id="btn-close-avoid" class="btn-close">✕</button>
+        </div>
+        <div id="avoid-zones-list" class="avoid-zones-list">
+            <div class="empty-state small"><p>No avoid zones defined</p></div>
+        </div>
+        <div class="avoid-panel-footer">
+            <input type="text" id="input-zone-name" class="form-input" placeholder="Zone name">
+            <button id="btn-draw-zone" class="btn btn-secondary">📐 Draw Zone on Map</button>
+            <button id="btn-finish-zone" class="btn btn-primary" style="display:none;">✓ Finish Zone</button>
+            <button id="btn-cancel-zone" class="btn btn-danger" style="display:none;">✕ Cancel</button>
+        </div>
+    </div>
+
+    <!-- ==================== LOADING OVERLAY ==================== -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <span id="loading-text" class="loading-text">Loading...</span>
+        </div>
+    </div>
+
+    <!-- ==================== TOAST CONTAINER ==================== -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- ==================== APP JS ==================== -->
+    <script src="app.js" defer></script>
+</body>
+</html>
