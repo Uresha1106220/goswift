@@ -17,8 +17,22 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Google Maps JavaScript API (with Places Autocomplete & Geometry) -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao&libraries=places,geometry"></script>
+    <!-- Google Maps JavaScript API (async, with graceful fallback to Leaflet on error) -->
+    <script>
+        window._googleMapsLoaded = false;
+        window._googleMapsFailed = false;
+        function onGoogleMapsError() {
+            window._googleMapsFailed = true;
+            console.warn('[GoSwift] Google Maps API unavailable — using Leaflet/TomTom fallback');
+            var el = document.getElementById('google-map');
+            if (el) el.style.display = 'none';
+        }
+    </script>
+    <script async
+        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao&libraries=places,geometry&loading=async"
+        onerror="onGoogleMapsError()"
+        onload="window._googleMapsLoaded=true">
+    </script>
 
     <!-- Leaflet (Air-Gapped / Offline Fallback) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -242,39 +256,36 @@
             </button>
         </div>
 
-        <!-- Top-Left Maneuver Card -->
-        <div id="hud-turn-card" class="hud-card hud-turn-card">
+        <!-- Top-Left Maneuver Card (hidden until route calculated) -->
+        <div id="hud-turn-card" class="hud-card hud-turn-card hud-hidden">
             <div class="hud-turn-icon-wrap">
                 <span class="hud-turn-icon" id="hud-turn-icon">↰</span>
             </div>
             <div class="hud-turn-text">
-                <div class="hud-turn-dist" id="hud-turn-dist">1.1 <span class="unit">km</span></div>
-                <div class="hud-turn-street" id="hud-turn-street">Durova St</div>
+                <div class="hud-turn-dist" id="hud-turn-dist">— <span class="unit">km</span></div>
+                <div class="hud-turn-street" id="hud-turn-street">—</div>
             </div>
         </div>
 
-        <!-- Top-Right Speedometer & Speed Limit Card -->
-        <div id="hud-speed-card" class="hud-card hud-speed-card">
+        <!-- Top-Right Speedometer & Speed Limit Card (hidden until navigating) -->
+        <div id="hud-speed-card" class="hud-card hud-speed-card hud-hidden">
             <div class="hud-speed-gauge-wrap">
                 <svg class="hud-speed-gauge-svg" viewBox="0 0 76 76">
                     <circle class="hud-speed-track" cx="38" cy="38" r="32" />
                     <circle class="hud-speed-bar" id="hud-speed-bar" cx="38" cy="38" r="32" />
                 </svg>
                 <div class="hud-speed-center">
-                    <div class="hud-speed-val" id="hud-speed-val">24</div>
-                </div>
-                <div class="hud-speed-cam-badge" title="Enforcement Alert">
-                    <span class="hud-cam-icon">📷</span>
+                    <div class="hud-speed-val" id="hud-speed-val">0</div>
                 </div>
             </div>
             <div class="hud-speed-limit-sign" id="hud-speed-limit-sign">
-                <span>50</span>
+                <span>—</span>
             </div>
         </div>
 
-        <!-- Center Roadside Signal & Lane Guidance Floating Pill -->
-        <div id="hud-signal-lane-pill" class="hud-signal-lane-pill">
-            <div class="hud-signal-circle green" id="hud-signal-circle">24</div>
+        <!-- Center Signal & Lane Guidance Pill (hidden until navigating) -->
+        <div id="hud-signal-lane-pill" class="hud-signal-lane-pill hud-hidden">
+            <div class="hud-signal-circle green" id="hud-signal-circle">—</div>
             <div class="hud-lanes" id="hud-lanes">
                 <span class="hud-lane">↑</span>
                 <span class="hud-lane active">↑</span>
@@ -283,41 +294,41 @@
             </div>
         </div>
 
-        <!-- Bottom-Left Circular Mini-Map Radar -->
-        <div id="hud-minimap-card" class="hud-minimap-card" title="Radar Overview">
+        <!-- Bottom-Left Circular Mini-Map Radar (hidden until navigating) -->
+        <div id="hud-minimap-card" class="hud-minimap-card hud-hidden" title="Radar Overview">
             <div id="hud-minimap" class="hud-minimap-inner"></div>
             <div class="hud-minimap-marker"></div>
         </div>
 
-        <!-- Current Street Name Pill (Above Bottom Dock) -->
-        <div id="hud-current-street" class="hud-current-street">
-            <span id="hud-current-street-name">Tsvetnoy Boulevard</span>
+        <!-- Current Street Name Pill (hidden until navigating) -->
+        <div id="hud-current-street" class="hud-current-street hud-hidden">
+            <span id="hud-current-street-name">—</span>
         </div>
 
         <!-- Bottom Navigation Floating Dock -->
         <div class="hud-bottom-dock">
-            <button id="btn-hud-search" class="hud-dock-btn" title="Search Destination / Origin">
+            <button id="btn-hud-search" class="hud-dock-btn" title="Open Route Planner">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                 </svg>
             </button>
 
-            <div class="hud-dock-stats" id="btn-hud-start-nav" title="Click to Start/Pause Simulation">
+            <div class="hud-dock-stats" id="btn-hud-start-nav" title="Start / Pause Drive Simulation">
                 <div class="hud-stat-col">
-                    <div class="hud-stat-val" id="hud-stat-time">4</div>
+                    <div class="hud-stat-val" id="hud-stat-time">—</div>
                     <div class="hud-stat-lbl">min</div>
                 </div>
                 <div class="hud-stat-col hud-stat-arrival">
-                    <div class="hud-stat-val" id="hud-stat-arrival">16:16</div>
+                    <div class="hud-stat-val" id="hud-stat-arrival">—:—</div>
                     <div class="hud-stat-lbl">arrival</div>
                 </div>
                 <div class="hud-stat-col">
-                    <div class="hud-stat-val" id="hud-stat-dist">1.6</div>
+                    <div class="hud-stat-val" id="hud-stat-dist">—</div>
                     <div class="hud-stat-lbl">km</div>
                 </div>
             </div>
 
-            <button id="btn-hud-menu" class="hud-dock-btn" title="Tactical Intel & Alternatives">
+            <button id="btn-hud-menu" class="hud-dock-btn" title="Tactical Panel">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="3" y1="12" x2="21" y2="12"></line>
                     <line x1="3" y1="6" x2="21" y2="6"></line>
@@ -326,11 +337,8 @@
             </button>
         </div>
 
-        <!-- Quick Floating Theme, 4D Weather & Drive Controls -->
+        <!-- Quick Floating Controls (Theme & Drive) -->
         <div class="hud-floating-controls">
-            <button id="btn-hud-weather" class="hud-round-btn" title="Toggle 4D Weather (Clear / Rain / Fog)">
-                <span id="hud-weather-icon">🌧️</span>
-            </button>
             <button id="btn-hud-theme" class="hud-round-btn" title="Toggle Day / Night Mode">
                 <span id="hud-theme-icon">🌙</span>
             </button>

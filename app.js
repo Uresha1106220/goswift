@@ -335,13 +335,7 @@
     }
 
     function initMap() {
-        // 1. Initialize Google Maps as Primary Engine if available
-        if (window.google && window.google.maps && window.google.maps.Map) {
-            initGoogleMap();
-            setupGooglePlacesAutocomplete();
-        }
-
-        // 2. Initialize Leaflet Map (serves as high-availability offline/air-gapped fallback)
+        // Always initialise Leaflet first — it is the rock-solid fallback
         state.map = L.map('map', {
             center: CONFIG.MAP_CENTER,
             zoom: CONFIG.MAP_ZOOM,
@@ -349,32 +343,20 @@
             preferCanvas: true
         });
 
-        // 1. Base Layer: Carto Dark Matter (Tactical Dark)
         const darkLayer = L.tileLayer(CONFIG.TILE_DARK, {
-            subdomains: 'abcd',
-            maxZoom: 19,
-            attribution: '&copy; CARTO &copy; OpenStreetMap'
+            subdomains: 'abcd', maxZoom: 19, attribution: '&copy; CARTO &copy; OpenStreetMap'
         });
-
-        // 2. Base Layer: OpenStreetMap Standard (High availability fallback)
         const osmLayer = L.tileLayer(CONFIG.TILE_OSM, {
-            subdomains: 'abc',
-            maxZoom: 19,
-            attribution: '&copy; OpenStreetMap'
+            subdomains: 'abc', maxZoom: 19, attribution: '&copy; OpenStreetMap'
         });
-
-        // 3. Base Layer: TomTom Real-Time Road Map (Using your live TomTom key)
         const tomtomLayer = L.tileLayer(CONFIG.TILE_TOMTOM, {
-            maxZoom: 19,
-            attribution: '&copy; TomTom'
+            maxZoom: 19, attribution: '&copy; TomTom'
         });
 
-        // Auto-fallback to OpenStreetMap if Carto tiles have network issues
         let fallbackDone = false;
         darkLayer.on('tileerror', function () {
             if (!fallbackDone && state.map) {
                 fallbackDone = true;
-                console.warn('Switching to standard OSM tiles fallback');
                 if (state.map.hasLayer(darkLayer)) {
                     state.map.removeLayer(darkLayer);
                     osmLayer.addTo(state.map);
@@ -382,28 +364,17 @@
                 }
             }
         });
-
-        // Add default layer
         darkLayer.addTo(state.map);
         state.tileLayer = darkLayer;
 
-        // Leaflet Layer Switcher Control (Top Right)
-        const baseMaps = {
-            "Tactical Dark": darkLayer,
-            "TomTom Live Map": tomtomLayer,
-            "Standard OSM": osmLayer
-        };
-        L.control.layers(baseMaps, null, { position: 'topright' }).addTo(state.map);
-
+        L.control.layers({ "Dark": darkLayer, "TomTom": tomtomLayer, "OSM": osmLayer }, null, { position: 'topright' }).addTo(state.map);
         L.control.zoom({ position: 'topright' }).addTo(state.map);
         L.control.scale({ position: 'bottomleft', imperial: false }).addTo(state.map);
 
-        // Force multiple size invalidations so Leaflet computes geometry immediately
         setTimeout(() => state.map && state.map.invalidateSize(), 100);
-        setTimeout(() => state.map && state.map.invalidateSize(), 500);
+        setTimeout(() => state.map && state.map.invalidateSize(), 600);
         setTimeout(() => state.map && state.map.invalidateSize(), 1500);
 
-        // Mouse position tracking
         state.map.on('mousemove', function (e) {
             if (!state.usingGoogleMaps) {
                 const el = document.getElementById('bottom-coords');
@@ -416,19 +387,27 @@
                 if (el) el.textContent = 'Z' + state.map.getZoom();
             }
         });
-
-        // Click to set origin / destination
         state.map.on('click', function (e) {
-            if (state.avoidZoneDrawing) {
-                addDrawingPoint(e.latlng);
+            if (state.avoidZoneDrawing) { addDrawingPoint(e.latlng); return; }
+            if (!state.origin) { setOrigin(e.latlng); }
+            else if (!state.destination) { setDestination(e.latlng); }
+        });
+
+        // Try to upgrade to Google Maps once the async script resolves (max 8s wait)
+        let gAttempts = 0;
+        const gPoll = setInterval(() => {
+            gAttempts++;
+            if (window._googleMapsFailed || gAttempts > 40) {
+                clearInterval(gPoll);
+                console.info('[GoSwift] Using Leaflet/TomTom map engine');
                 return;
             }
-            if (!state.origin) {
-                setOrigin(e.latlng);
-            } else if (!state.destination) {
-                setDestination(e.latlng);
+            if (window._googleMapsLoaded && window.google && window.google.maps && window.google.maps.Map) {
+                clearInterval(gPoll);
+                const ok = initGoogleMap();
+                if (ok) setupGooglePlacesAutocomplete();
             }
-        });
+        }, 200);
     }
 
     function createMarkerIcon(color, label) {
@@ -1870,28 +1849,28 @@
         const turnStreetEl = document.getElementById('hud-turn-street');
         const turnIconEl = document.getElementById('hud-turn-icon');
 
-        const distKm = route.distance_km || 1.6;
+        const distKm = route.distance_km || 0;
         if (turnDistEl) {
             if (distKm >= 1) turnDistEl.innerHTML = (distKm * 0.7).toFixed(1) + ' <span class="unit">km</span>';
             else turnDistEl.innerHTML = Math.round(distKm * 700) + ' <span class="unit">m</span>';
         }
 
-        const destLabel = state.destination?.label || 'Durova St';
-        const origLabel = state.origin?.label || 'Tsvetnoy Blvd';
+        const destLabel = state.destination?.label || '';
+        const origLabel = state.origin?.label || '';
 
-        if (turnStreetEl) turnStreetEl.textContent = destLabel.split(',')[0];
+        if (turnStreetEl) turnStreetEl.textContent = destLabel.split(',')[0] || '—';
         if (turnIconEl) turnIconEl.textContent = '↰';
 
         // Current street
         const curStreetEl = document.getElementById('hud-current-street-name');
-        if (curStreetEl) curStreetEl.textContent = origLabel.split(',')[0];
+        if (curStreetEl) curStreetEl.textContent = origLabel.split(',')[0] || '—';
 
         // Bottom dock stats
         const statTime = document.getElementById('hud-stat-time');
         const statArrival = document.getElementById('hud-stat-arrival');
         const statDist = document.getElementById('hud-stat-dist');
 
-        const etaMin = Math.round(route.eta_p50_minutes || 4);
+        const etaMin = Math.round(route.eta_p50_minutes || 0);
         if (statTime) statTime.textContent = etaMin;
         if (statDist) statDist.textContent = distKm.toFixed(1);
 
@@ -1899,6 +1878,21 @@
             const arrDate = new Date(Date.now() + etaMin * 60000);
             statArrival.textContent = arrDate.getHours().toString().padStart(2, '0') + ':' +
                                       arrDate.getMinutes().toString().padStart(2, '0');
+        }
+
+        // Reveal all HUD overlays now that a real route exists
+        ['hud-turn-card','hud-speed-card','hud-signal-lane-pill','hud-current-street'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.classList.remove('hud-hidden');
+                el.classList.add('hud-visible');
+            }
+        });
+        // minimap uses block layout, not flex
+        const minimapCard = document.getElementById('hud-minimap-card');
+        if (minimapCard) {
+            minimapCard.classList.remove('hud-hidden');
+            minimapCard.style.display = 'block';
         }
 
         // Initialize or update MiniMap
@@ -2854,7 +2848,10 @@
     }
 
     function initHUD() {
-        updateSpeedometer(24);
+        updateSpeedometer(0);
+        // Reset SVG bar to zero
+        const barEl = document.getElementById('hud-speed-bar');
+        if (barEl) barEl.style.strokeDashoffset = 201;
     }
 
     function setupEventListeners() {
