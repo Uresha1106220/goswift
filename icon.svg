@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a"/>
+      <stop offset="50%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="carGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ef4444"/>
+      <stop offset="100%" stop-color="#b91c1c"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <!-- Background Shield -->
+  <rect width="512" height="512" rx="128" fill="#0a0e17"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#2563eb" stroke-width="4" opacity="0.4"/>
+  
+  <!-- Radar Rings -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="8 8" opacity="0.4"/>
+  <circle cx="256" cy="256" r="110" fill="none" stroke="#38bdf8" stroke-width="2" opacity="0.6"/>
+  <circle cx="256" cy="256" r="40" fill="none" stroke="#22c55e" stroke-width="3" opacity="0.8"/>
+  
+  <!-- Navigation Target Crosshairs -->
+  <line x1="256" y1="56" x2="256" y2="456" stroke="#38bdf8" stroke-width="2" opacity="0.3"/>
+  <line x1="56" y1="256" x2="456" y2="256" stroke="#38bdf8" stroke-width="2" opacity="0.3"/>
+
+  <!-- Glowing Route Path -->
+  <path d="M 140 400 Q 220 320 256 256 T 380 120" fill="none" stroke="#22c55e" stroke-width="14" stroke-linecap="round" filter="url(#glow)"/>
+  
+  <!-- Speed Arrow / Compass Needle -->
+  <polygon points="256,160 286,280 256,260 226,280" fill="#38bdf8" filter="url(#glow)"/>
+  
+  <!-- Central Pulse Dot -->
+  <circle cx="256" cy="256" r="10" fill="#ffffff"/>
+</svg>

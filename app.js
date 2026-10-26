@@ -85,7 +85,19 @@
         canvas4D: null,
         ctx4D: null,
         raf4D: null,
-        simOffset: 0
+        simOffset: 0,
+        usingGoogleMaps: false,
+        googleMap: null,
+        googleTrafficLayer: null,
+        googleDirectionsService: null,
+        googleOriginAutocomplete: null,
+        googleDestAutocomplete: null,
+        googleStreetView: null,
+        googleRoutePolylines: [],
+        googleOriginMarker: null,
+        googleDestMarker: null,
+        googleCarMarker: null,
+        googleSignalMarkers: []
     };
 
     // === SECTION 3: API CLIENT ===
@@ -185,9 +197,151 @@
         }
     }
 
-    // === SECTION 5: MAP MANAGEMENT ===
+    // === SECTION 5: MAP MANAGEMENT (DUAL ENGINE: GOOGLE MAPS + LEAFLET FALLBACK) ===
+
+    const GOOGLE_MAP_DARK_STYLE = [
+        { elementType: 'geometry', stylers: [{ color: '#111827' }] },
+        { elementType: 'labels.text.stroke', stylers: [{ color: '#111827' }] },
+        { elementType: 'labels.text.fill', stylers: [{ color: '#94a3b8' }] },
+        { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
+        { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#64748b' }] },
+        { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#14202e' }] },
+        { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#38bdf8' }] },
+        { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+        { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#0f172a' }] },
+        { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#cbd5e1' }] },
+        { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#334155' }] },
+        { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#1e293b' }] },
+        { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#f8fafc' }] },
+        { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#1e293b' }] },
+        { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#38bdf8' }] },
+        { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#09131e' }] },
+        { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#38bdf8' }] },
+        { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#09131e' }] }
+    ];
+
+    function initGoogleMap() {
+        const gMapEl = document.getElementById('google-map');
+        if (!gMapEl || !window.google || !window.google.maps || !window.google.maps.Map) return false;
+
+        try {
+            gMapEl.style.display = 'block';
+
+            state.googleMap = new google.maps.Map(gMapEl, {
+                center: { lat: CONFIG.MAP_CENTER[0], lng: CONFIG.MAP_CENTER[1] },
+                zoom: CONFIG.MAP_ZOOM,
+                styles: state.theme === 'day' ? [] : GOOGLE_MAP_DARK_STYLE,
+                disableDefaultUI: false,
+                zoomControl: true,
+                zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_TOP },
+                mapTypeControl: true,
+                mapTypeControlOptions: {
+                    position: google.maps.ControlPosition.TOP_RIGHT,
+                    style: google.maps.MapTypeControlStyle.DROPDOWN_MENU
+                },
+                streetViewControl: false,
+                fullscreenControl: false,
+                heading: 0,
+                tilt: 45
+            });
+
+            // Add real-time traffic layer
+            state.googleTrafficLayer = new google.maps.TrafficLayer();
+            state.googleTrafficLayer.setMap(state.googleMap);
+
+            // Click on Google Map to set origin or destination
+            state.googleMap.addListener('click', (e) => {
+                if (state.avoidZoneDrawing) {
+                    addDrawingPoint({ lat: e.latLng.lat(), lng: e.latLng.lng() });
+                    return;
+                }
+                if (!state.origin) {
+                    setOrigin(e.latLng);
+                } else if (!state.destination) {
+                    setDestination(e.latLng);
+                }
+            });
+
+            // Mousemove coordinate tracking
+            state.googleMap.addListener('mousemove', (e) => {
+                const el = document.getElementById('bottom-coords');
+                if (el) el.textContent = e.latLng.lat().toFixed(5) + ', ' + e.latLng.lng().toFixed(5);
+            });
+
+            state.googleMap.addListener('zoom_changed', () => {
+                const el = document.getElementById('bottom-zoom');
+                if (el) el.textContent = 'Z' + state.googleMap.getZoom();
+            });
+
+            state.usingGoogleMaps = true;
+            return true;
+        } catch (err) {
+            console.warn('Google Maps initialization note:', err);
+            gMapEl.style.display = 'none';
+            state.usingGoogleMaps = false;
+            return false;
+        }
+    }
+
+    function setupGooglePlacesAutocomplete() {
+        if (!window.google || !window.google.maps || !window.google.maps.places) return;
+
+        const originInput = document.getElementById('input-origin');
+        const destInput = document.getElementById('input-destination');
+
+        if (originInput) {
+            state.googleOriginAutocomplete = new google.maps.places.Autocomplete(originInput, {
+                fields: ['formatted_address', 'geometry', 'name']
+            });
+            state.googleOriginAutocomplete.addListener('place_changed', () => {
+                const place = state.googleOriginAutocomplete.getPlace();
+                if (place && place.geometry && place.geometry.location) {
+                    const lat = place.geometry.location.lat();
+                    const lng = place.geometry.location.lng();
+                    const label = place.formatted_address || place.name || originInput.value;
+                    setOrigin({ lat, lng }, label);
+                    if (state.usingGoogleMaps && state.googleMap) {
+                        state.googleMap.setCenter({ lat, lng });
+                        state.googleMap.setZoom(15);
+                    }
+                    if (state.map) {
+                        state.map.setView([lat, lng], 15);
+                    }
+                }
+            });
+        }
+
+        if (destInput) {
+            state.googleDestAutocomplete = new google.maps.places.Autocomplete(destInput, {
+                fields: ['formatted_address', 'geometry', 'name']
+            });
+            state.googleDestAutocomplete.addListener('place_changed', () => {
+                const place = state.googleDestAutocomplete.getPlace();
+                if (place && place.geometry && place.geometry.location) {
+                    const lat = place.geometry.location.lat();
+                    const lng = place.geometry.location.lng();
+                    const label = place.formatted_address || place.name || destInput.value;
+                    setDestination({ lat, lng }, label);
+                    if (state.usingGoogleMaps && state.googleMap) {
+                        state.googleMap.setCenter({ lat, lng });
+                        state.googleMap.setZoom(15);
+                    }
+                    if (state.map) {
+                        state.map.setView([lat, lng], 15);
+                    }
+                }
+            });
+        }
+    }
 
     function initMap() {
+        // 1. Initialize Google Maps as Primary Engine if available
+        if (window.google && window.google.maps && window.google.maps.Map) {
+            initGoogleMap();
+            setupGooglePlacesAutocomplete();
+        }
+
+        // 2. Initialize Leaflet Map (serves as high-availability offline/air-gapped fallback)
         state.map = L.map('map', {
             center: CONFIG.MAP_CENTER,
             zoom: CONFIG.MAP_ZOOM,
@@ -251,12 +405,16 @@
 
         // Mouse position tracking
         state.map.on('mousemove', function (e) {
-            const el = document.getElementById('bottom-coords');
-            if (el) el.textContent = e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+            if (!state.usingGoogleMaps) {
+                const el = document.getElementById('bottom-coords');
+                if (el) el.textContent = e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+            }
         });
         state.map.on('zoomend', function () {
-            const el = document.getElementById('bottom-zoom');
-            if (el) el.textContent = 'Z' + state.map.getZoom();
+            if (!state.usingGoogleMaps) {
+                const el = document.getElementById('bottom-zoom');
+                if (el) el.textContent = 'Z' + state.map.getZoom();
+            }
         });
 
         // Click to set origin / destination
@@ -285,40 +443,117 @@
     }
 
     function setOrigin(latlng, label) {
-        state.origin = { lat: latlng.lat, lng: latlng.lng, label: label || '' };
-        if (state.originMarker) state.map.removeLayer(state.originMarker);
-        state.originMarker = L.marker(latlng, { icon: createMarkerIcon('#22c55e', 'A') })
-            .addTo(state.map)
-            .bindPopup('<b>Origin:</b> ' + (label || (latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5))));
-        document.getElementById('input-origin').value = label || (latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5));
-        showToast('Origin: ' + (label ? label.slice(0, 30) + '...' : latlng.lat.toFixed(4) + ', ' + latlng.lng.toFixed(4)), 'info', 2000);
+        if (!latlng) return;
+        const lat = typeof latlng.lat === 'function' ? latlng.lat() : latlng.lat;
+        const lng = typeof latlng.lng === 'function' ? latlng.lng() : latlng.lng;
+        state.origin = { lat, lng, label: label || '' };
+        const labelText = label || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+
+        // Leaflet marker
+        if (state.map) {
+            if (state.originMarker) state.map.removeLayer(state.originMarker);
+            state.originMarker = L.marker([lat, lng], { icon: createMarkerIcon('#22c55e', 'A') })
+                .addTo(state.map)
+                .bindPopup('<b>Origin:</b> ' + labelText);
+        }
+
+        // Google Maps marker
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            if (state.googleOriginMarker) state.googleOriginMarker.setMap(null);
+            state.googleOriginMarker = new google.maps.Marker({
+                position: { lat, lng },
+                map: state.googleMap,
+                title: 'Origin: ' + labelText,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 11,
+                    fillColor: '#22c55e',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 3
+                },
+                label: { text: 'A', color: '#ffffff', fontWeight: 'bold' }
+            });
+        }
+
+        const input = document.getElementById('input-origin');
+        if (input) input.value = labelText;
+        showToast('Origin: ' + (label ? label.slice(0, 30) + '...' : lat.toFixed(4) + ', ' + lng.toFixed(4)), 'info', 2000);
     }
 
     function setDestination(latlng, label) {
-        state.destination = { lat: latlng.lat, lng: latlng.lng, label: label || '' };
-        if (state.destMarker) state.map.removeLayer(state.destMarker);
-        state.destMarker = L.marker(latlng, { icon: createMarkerIcon('#ef4444', 'B') })
-            .addTo(state.map)
-            .bindPopup('<b>Destination:</b> ' + (label || (latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5))));
-        document.getElementById('input-destination').value = label || (latlng.lat.toFixed(5) + ', ' + latlng.lng.toFixed(5));
-        showToast('Destination: ' + (label ? label.slice(0, 30) + '...' : latlng.lat.toFixed(4) + ', ' + latlng.lng.toFixed(4)), 'info', 2000);
+        if (!latlng) return;
+        const lat = typeof latlng.lat === 'function' ? latlng.lat() : latlng.lat;
+        const lng = typeof latlng.lng === 'function' ? latlng.lng() : latlng.lng;
+        state.destination = { lat, lng, label: label || '' };
+        const labelText = label || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+
+        // Leaflet marker
+        if (state.map) {
+            if (state.destMarker) state.map.removeLayer(state.destMarker);
+            state.destMarker = L.marker([lat, lng], { icon: createMarkerIcon('#ef4444', 'B') })
+                .addTo(state.map)
+                .bindPopup('<b>Destination:</b> ' + labelText);
+        }
+
+        // Google Maps marker
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            if (state.googleDestMarker) state.googleDestMarker.setMap(null);
+            state.googleDestMarker = new google.maps.Marker({
+                position: { lat, lng },
+                map: state.googleMap,
+                title: 'Destination: ' + labelText,
+                icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    scale: 11,
+                    fillColor: '#ef4444',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 3
+                },
+                label: { text: 'B', color: '#ffffff', fontWeight: 'bold' }
+            });
+        }
+
+        const input = document.getElementById('input-destination');
+        if (input) input.value = labelText;
+        showToast('Destination: ' + (label ? label.slice(0, 30) + '...' : lat.toFixed(4) + ', ' + lng.toFixed(4)), 'info', 2000);
     }
 
     function fitMapToRoute(route) {
         if (!route || !route.segments || !route.segments.length) return;
         const allCoords = route.segments.flatMap(s => s.coords);
-        if (allCoords.length) {
+        if (!allCoords.length) return;
+
+        if (state.map) {
             state.map.fitBounds(L.latLngBounds(allCoords.map(c => [c[0], c[1]])), { padding: [60, 60] });
+        }
+
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            const bounds = new google.maps.LatLngBounds();
+            allCoords.forEach(c => bounds.extend({ lat: c[0], lng: c[1] }));
+            state.googleMap.fitBounds(bounds, 60);
         }
     }
 
     // === SECTION 6: ROUTE RENDERING ===
 
     function clearRoutes() {
-        state.routeLayers.forEach(l => state.map.removeLayer(l));
+        if (state.map) {
+            state.routeLayers.forEach(l => state.map.removeLayer(l));
+            state.signalMarkers.forEach(m => state.map.removeLayer(m));
+        }
         state.routeLayers = [];
-        state.signalMarkers.forEach(m => state.map.removeLayer(m));
         state.signalMarkers = [];
+
+        if (state.googleRoutePolylines) {
+            state.googleRoutePolylines.forEach(p => p.setMap(null));
+            state.googleRoutePolylines = [];
+        }
+        if (state.googleSignalMarkers) {
+            state.googleSignalMarkers.forEach(m => m.setMap(null));
+            state.googleSignalMarkers = [];
+        }
     }
 
     function renderRoutes(routes) {
@@ -332,21 +567,42 @@
             route.segments.forEach(seg => {
                 const latlngs = seg.coords.map(c => [c[0], c[1]]);
                 const isSelected = route.id === state.selectedRouteId;
-                const poly = L.polyline(latlngs, {
-                    color: CONFIG.CONGESTION_COLORS[seg.congestion] || route.color,
-                    weight: isSelected ? 7 : 4,
-                    opacity: isSelected ? 1.0 : 0.55,
-                    lineJoin: 'round',
-                    lineCap: 'round'
-                }).addTo(state.map);
-                poly.bindPopup(
-                    '<b>' + seg.congestion.toUpperCase() + '</b><br>' +
-                    'Speed: ' + seg.speed_kmh + ' km/h<br>' +
-                    'Free flow: ' + seg.free_flow_kmh + ' km/h<br>' +
-                    'Ratio: ' + (seg.speed_ratio * 100).toFixed(0) + '%'
-                );
-                poly._routeId = route.id;
-                state.routeLayers.push(poly);
+
+                // Leaflet polyline
+                if (state.map) {
+                    const poly = L.polyline(latlngs, {
+                        color: CONFIG.CONGESTION_COLORS[seg.congestion] || route.color,
+                        weight: isSelected ? 7 : 4,
+                        opacity: isSelected ? 1.0 : 0.55,
+                        lineJoin: 'round',
+                        lineCap: 'round'
+                    }).addTo(state.map);
+                    poly.bindPopup(
+                        '<b>' + seg.congestion.toUpperCase() + '</b><br>' +
+                        'Speed: ' + seg.speed_kmh + ' km/h<br>' +
+                        'Free flow: ' + seg.free_flow_kmh + ' km/h<br>' +
+                        'Ratio: ' + (seg.speed_ratio * 100).toFixed(0) + '%'
+                    );
+                    poly._routeId = route.id;
+                    state.routeLayers.push(poly);
+                }
+
+                // Google Maps polyline
+                if (state.usingGoogleMaps && state.googleMap && window.google) {
+                    const gCoords = seg.coords.map(c => ({ lat: c[0], lng: c[1] }));
+                    const gPoly = new google.maps.Polyline({
+                        path: gCoords,
+                        geodesic: true,
+                        strokeColor: CONFIG.CONGESTION_COLORS[seg.congestion] || route.color,
+                        strokeOpacity: isSelected ? 1.0 : 0.6,
+                        strokeWeight: isSelected ? 7 : 4,
+                        zIndex: isSelected ? 10 : 5,
+                        map: state.googleMap
+                    });
+                    gPoly._routeId = route.id;
+                    gPoly.addListener('click', () => selectRoute(route.id));
+                    state.googleRoutePolylines.push(gPoly);
+                }
             });
 
             // Create route card
@@ -412,6 +668,17 @@
             if (isSelected) l.bringToFront();
         });
 
+        if (state.googleRoutePolylines) {
+            state.googleRoutePolylines.forEach(p => {
+                const isSelected = p._routeId === routeId;
+                p.setOptions({
+                    strokeWeight: isSelected ? 7 : 4,
+                    strokeOpacity: isSelected ? 1.0 : 0.55,
+                    zIndex: isSelected ? 10 : 5
+                });
+            });
+        }
+
         // Load signals for selected route
         const route = state.routes.find(r => r.id === routeId);
         if (route) {
@@ -474,25 +741,49 @@
     }
 
     function renderSignalMarkers(signals) {
-        state.signalMarkers.forEach(m => state.map.removeLayer(m));
-        state.signalMarkers = [];
+        if (state.map) {
+            state.signalMarkers.forEach(m => state.map.removeLayer(m));
+            state.signalMarkers = [];
 
-        signals.forEach(sig => {
-            const color = sig.current_phase === 'green' ? '#22c55e' :
-                          sig.current_phase === 'red' ? '#ef4444' :
-                          sig.current_phase === 'yellow' ? '#eab308' : '#64748b';
-            const marker = L.circleMarker([sig.lat, sig.lng], {
-                radius: 6, fillColor: color, color: '#fff',
-                weight: 1.5, fillOpacity: 0.9
-            }).addTo(state.map);
-            marker.bindPopup(
-                '<b>Signal ' + sig.id + '</b><br>' +
-                'Phase: ' + (sig.current_phase || 'unknown') + '<br>' +
-                'Cycle: ' + (sig.cycle_length_s || '?') + 's<br>' +
-                'Tier: ' + (sig.confidence_badge || 'bronze').toUpperCase()
-            );
-            state.signalMarkers.push(marker);
-        });
+            signals.forEach(sig => {
+                const color = sig.current_phase === 'green' ? '#22c55e' :
+                              sig.current_phase === 'red' ? '#ef4444' :
+                              sig.current_phase === 'yellow' ? '#eab308' : '#64748b';
+                const marker = L.circleMarker([sig.lat, sig.lng], {
+                    radius: 6, fillColor: color, color: '#fff',
+                    weight: 1.5, fillOpacity: 0.9
+                }).addTo(state.map);
+                marker.bindPopup(
+                    '<b>Signal ' + sig.id + '</b><br>' +
+                    'Phase: ' + (sig.current_phase || 'unknown') + '<br>' +
+                    'Cycle: ' + (sig.cycle_length_s || '?') + 's<br>' +
+                    'Tier: ' + (sig.confidence_badge || 'bronze').toUpperCase()
+                );
+                state.signalMarkers.push(marker);
+            });
+        }
+
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            state.googleSignalMarkers.forEach(m => m.setMap(null));
+            state.googleSignalMarkers = [];
+
+            signals.forEach(sig => {
+                const color = sig.current_phase === 'green' ? '#22c55e' :
+                              sig.current_phase === 'red' ? '#ef4444' :
+                              sig.current_phase === 'yellow' ? '#eab308' : '#64748b';
+                const marker = new google.maps.Circle({
+                    strokeColor: '#ffffff',
+                    strokeOpacity: 0.9,
+                    strokeWeight: 1.5,
+                    fillColor: color,
+                    fillOpacity: 0.9,
+                    map: state.googleMap,
+                    center: { lat: sig.lat, lng: sig.lng },
+                    radius: 12
+                });
+                state.googleSignalMarkers.push(marker);
+            });
+        }
     }
 
     function updateGreenWave(gw) {
@@ -850,13 +1141,18 @@
         const btnLeft = document.getElementById('btn-collapse-left');
         const btnRight = document.getElementById('btn-collapse-right');
         const mapEl = document.getElementById('map');
+        const gMapEl = document.getElementById('google-map');
 
         if (btnLeft) {
             btnLeft.addEventListener('click', () => {
                 const isCollapsed = leftPanel.classList.toggle('panel-collapsed');
                 btnLeft.textContent = isCollapsed ? '▸' : '◂';
                 if (mapEl) mapEl.style.left = isCollapsed ? '0px' : 'var(--left-panel-w)';
-                setTimeout(() => state.map && state.map.invalidateSize(), 200);
+                if (gMapEl) gMapEl.style.left = isCollapsed ? '0px' : 'var(--left-panel-w)';
+                setTimeout(() => {
+                    if (state.map) state.map.invalidateSize();
+                    if (state.googleMap && window.google) google.maps.event.trigger(state.googleMap, 'resize');
+                }, 200);
             });
         }
         if (btnRight) {
@@ -864,7 +1160,11 @@
                 const isCollapsed = rightPanel.classList.toggle('panel-collapsed');
                 btnRight.textContent = isCollapsed ? '◂' : '▸';
                 if (mapEl) mapEl.style.right = isCollapsed ? '0px' : 'var(--right-panel-w)';
-                setTimeout(() => state.map && state.map.invalidateSize(), 200);
+                if (gMapEl) gMapEl.style.right = isCollapsed ? '0px' : 'var(--right-panel-w)';
+                setTimeout(() => {
+                    if (state.map) state.map.invalidateSize();
+                    if (state.googleMap && window.google) google.maps.event.trigger(state.googleMap, 'resize');
+                }, 200);
             });
         }
     }
@@ -1504,6 +1804,13 @@
                 }).addTo(state.map);
             }
         }
+
+        // Switch Google Maps theme
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            state.googleMap.setOptions({
+                styles: isDay ? [] : GOOGLE_MAP_DARK_STYLE
+            });
+        }
         showToast(isDay ? 'Day Mode Activated' : 'Night Mode Activated', 'info', 1800);
     }
 
@@ -1624,6 +1931,25 @@
             zIndexOffset: 1000
         }).addTo(state.map);
 
+        // Google Maps car marker
+        if (state.usingGoogleMaps && state.googleMap && window.google) {
+            if (state.googleCarMarker) state.googleCarMarker.setMap(null);
+            state.googleCarMarker = new google.maps.Marker({
+                position: { lat: startPt[0], lng: startPt[1] },
+                map: state.googleMap,
+                icon: {
+                    path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                    scale: 6,
+                    fillColor: '#dc2626',
+                    fillOpacity: 1,
+                    strokeColor: '#ffffff',
+                    strokeWeight: 2,
+                    rotation: bearing
+                },
+                zIndex: 9999
+            });
+        }
+
         // 2. Traffic Signal with live countdown & lane guidance on road
         if (allCoords.length > 6) {
             const sigIdx = Math.floor(allCoords.length * 0.45);
@@ -1680,14 +2006,44 @@
             const next = allCoords[(coordIdx + 1) % total];
             const bearing = calculateBearing(curr[0], curr[1], next[0], next[1]);
 
-            // Update car marker
+            // Update car marker (Leaflet)
             if (state.carMarker) {
                 state.carMarker.setLatLng([curr[0], curr[1]]);
                 state.carMarker.setIcon(createCarIcon(bearing));
             }
 
+            // Update car marker (Google Maps)
+            if (state.usingGoogleMaps && state.googleMap && window.google) {
+                if (!state.googleCarMarker) {
+                    state.googleCarMarker = new google.maps.Marker({
+                        position: { lat: curr[0], lng: curr[1] },
+                        map: state.googleMap,
+                        icon: {
+                            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                            scale: 6,
+                            fillColor: '#dc2626',
+                            fillOpacity: 1,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 2,
+                            rotation: bearing
+                        },
+                        zIndex: 9999
+                    });
+                } else {
+                    state.googleCarMarker.setPosition({ lat: curr[0], lng: curr[1] });
+                    const icon = state.googleCarMarker.getIcon();
+                    if (icon) {
+                        icon.rotation = bearing;
+                        state.googleCarMarker.setIcon(icon);
+                    }
+                }
+                if (coordIdx % 4 === 0) {
+                    state.googleMap.panTo({ lat: curr[0], lng: curr[1] });
+                }
+            }
+
             // Smoothly pan map with vehicle
-            if (coordIdx % 4 === 0) {
+            if (coordIdx % 4 === 0 && state.map) {
                 state.map.panTo([curr[0], curr[1]], { animate: true, duration: 0.3 });
             }
 
@@ -2248,20 +2604,71 @@
         ctx.shadowBlur = 0;
     }
 
-    // 360° Street View Engine
+    // 360° Street View Engine (Dual Engine: Google Street View + 3D Canvas Fallback)
     function initStreetViewPanorama() {
+        const panoDiv = document.getElementById('street-view-pano');
         const canvas = document.getElementById('street-view-canvas');
-        if (!canvas) return;
-
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight - 56;
-
         const streetNameEl = document.getElementById('sv-street-name');
         const coordsEl = document.getElementById('sv-coords');
 
         const curPt = state.origin || { lat: 28.6139, lng: 77.2090, label: 'Tsvetnoy Boulevard' };
         if (streetNameEl) streetNameEl.textContent = curPt.label || 'Tsvetnoy Boulevard';
         if (coordsEl) coordsEl.textContent = `${curPt.lat.toFixed(5)}, ${curPt.lng.toFixed(5)}`;
+
+        if (window.google && window.google.maps && window.google.maps.StreetViewService && panoDiv) {
+            const svService = new google.maps.StreetViewService();
+            svService.getPanorama({
+                location: { lat: curPt.lat, lng: curPt.lng },
+                radius: 100,
+                preference: google.maps.StreetViewPreference.NEAREST
+            }, (data, status) => {
+                if (status === google.maps.StreetViewStatus.OK && data && data.location) {
+                    panoDiv.style.display = 'block';
+                    if (canvas) canvas.style.display = 'none';
+                    if (streetNameEl && data.location.description) {
+                        streetNameEl.textContent = data.location.description;
+                    }
+
+                    if (!state.googleStreetView) {
+                        state.googleStreetView = new google.maps.StreetViewPanorama(panoDiv, {
+                            position: data.location.latLng,
+                            pov: { heading: state.streetViewHeading, pitch: 0 },
+                            zoom: 1,
+                            addressControl: true,
+                            showRoadLabels: true,
+                            motionTracking: true,
+                            motionTrackingControl: true
+                        });
+                        state.googleStreetView.addListener('pov_changed', () => {
+                            const pov = state.googleStreetView.getPov();
+                            state.streetViewHeading = pov.heading;
+                            const compass = document.getElementById('sv-compass-dial');
+                            if (compass) compass.style.transform = `rotate(${-pov.heading}deg)`;
+                        });
+                    } else {
+                        state.googleStreetView.setPosition(data.location.latLng);
+                        state.googleStreetView.setPov({ heading: state.streetViewHeading, pitch: 0 });
+                        state.googleStreetView.setVisible(true);
+                    }
+                    return;
+                }
+                // Fallback to Canvas panorama if Google Street View imagery not available at this exact lat/lng
+                initCanvasStreetViewFallback();
+            });
+        } else {
+            initCanvasStreetViewFallback();
+        }
+    }
+
+    function initCanvasStreetViewFallback() {
+        const panoDiv = document.getElementById('street-view-pano');
+        const canvas = document.getElementById('street-view-canvas');
+        if (panoDiv) panoDiv.style.display = 'none';
+        if (!canvas) return;
+        canvas.style.display = 'block';
+
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight - 56;
 
         renderStreetViewPanorama();
 
@@ -2627,6 +3034,7 @@
         // Window resize
         window.addEventListener('resize', debounce(() => {
             if (state.map) state.map.invalidateSize();
+            if (state.googleMap && window.google) google.maps.event.trigger(state.googleMap, 'resize');
         }, 200));
     }
 
@@ -2654,6 +3062,7 @@
     document.addEventListener('DOMContentLoaded', init);
     window.addEventListener('load', () => {
         if (state.map) state.map.invalidateSize();
+        if (state.googleMap && window.google) google.maps.event.trigger(state.googleMap, 'resize');
     });
 
 })();

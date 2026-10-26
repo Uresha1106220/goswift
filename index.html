@@ -5,11 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GoSwift — Defense-Grade Traffic Intelligence</title>
 
+    <!-- PWA & Mobile Optimization -->
+    <meta name="theme-color" content="#0a0e17">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Leaflet -->
+    <!-- Google Maps JavaScript API (with Places Autocomplete & Geometry) -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao&libraries=places,geometry"></script>
+
+    <!-- Leaflet (Air-Gapped / Offline Fallback) -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -179,7 +190,8 @@
         </div>
     </aside>
 
-    <!-- ==================== MAP ==================== -->
+    <!-- ==================== MAPS (DUAL ENGINE: GOOGLE MAPS + LEAFLET FALLBACK) ==================== -->
+    <div id="google-map" class="google-map" style="display:none;"></div>
     <div id="map"></div>
 
     <!-- ==================== 4D / 3D PERSPECTIVE ROAD CANVAS ==================== -->
@@ -201,12 +213,13 @@
             </div>
         </div>
         <div id="street-view-container" class="street-view-container">
-            <canvas id="street-view-canvas" class="street-view-canvas"></canvas>
+            <div id="street-view-pano" class="street-view-pano"></div>
+            <canvas id="street-view-canvas" class="street-view-canvas" style="display:none;"></canvas>
             <div class="street-view-compass">
                 <div class="compass-dial" id="sv-compass-dial">
                     <span>N</span>
                 </div>
-                <div class="drag-hint">↔ Drag to look around 360° | Scroll to Zoom</div>
+                <div class="drag-hint">↔ Drag to look around 360° | Step forward along street</div>
             </div>
         </div>
     </div>
@@ -546,5 +559,12 @@
 
     <!-- ==================== APP JS ==================== -->
     <script src="app.js" defer></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(err => console.warn('SW registration:', err));
+            });
+        }
+    </script>
 </body>
 </html>

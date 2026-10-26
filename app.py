@@ -1965,6 +1965,18 @@ async def serve_css():
 async def serve_js():
     return FileResponse(BASE_DIR / "app.js", media_type="application/javascript")
 
+@app.get("/manifest.json")
+async def serve_manifest():
+    return FileResponse(BASE_DIR / "manifest.json", media_type="application/manifest+json")
+
+@app.get("/sw.js")
+async def serve_sw():
+    return FileResponse(BASE_DIR / "sw.js", media_type="application/javascript")
+
+@app.get("/icon.svg")
+async def serve_icon():
+    return FileResponse(BASE_DIR / "icon.svg", media_type="image/svg+xml")
+
 
 @app.on_event("startup")
 async def startup():

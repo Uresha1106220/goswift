@@ -16,6 +16,18 @@
     {
       "src": "app.js",
       "use": "@vercel/static"
+    },
+    {
+      "src": "manifest.json",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "sw.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "icon.svg",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
@@ -24,7 +36,7 @@
       "dest": "api/index.py"
     },
     {
-      "src": "/(style.css|app.js|favicon.ico)",
+      "src": "/(style.css|app.js|manifest.json|sw.js|icon.svg|favicon.ico)",
       "dest": "/$1"
     },
     {
