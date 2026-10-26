@@ -17,49 +17,10 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Google Maps: loaded dynamically to avoid API banner errors on page load -->
+    <!-- Map engine: Leaflet only — Google Maps removed to prevent API key error banners -->
     <script>
         window._googleMapsLoaded = false;
-        window._googleMapsFailed = false;
-
-        // Global callback required by Google Maps JS API
-        window.googleMapsReadyCallback = function() {
-            window._googleMapsLoaded = true;
-        };
-
-        // Suppress any Google Maps error overlay injected into the DOM
-        function _suppressGoogleMapsError() {
-            var style = document.createElement('style');
-            style.textContent = [
-                '.gm-err-container { display:none!important; }',
-                '.gm-err-content { display:none!important; }',
-                '[src*="maps.googleapis.com/maps/api/js/"] ~ div.gm-style div:empty { display:none; }',
-                'body > div:not(#app):not(#loading-overlay) { overflow:hidden; }'
-            ].join('');
-            document.head.appendChild(style);
-        }
-        _suppressGoogleMapsError();
-
-        // Dynamically inject Google Maps script so page works fine without it
-        (function loadGoogleMaps() {
-            try {
-                var s = document.createElement('script');
-                s.src = 'https://maps.googleapis.com/maps/api/js' +
-                        '?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao' +
-                        '&libraries=places,geometry' +
-                        '&callback=googleMapsReadyCallback' +
-                        '&loading=async';
-                s.async = true;
-                s.defer = true;
-                s.onerror = function() {
-                    window._googleMapsFailed = true;
-                    console.warn('[GoSwift] Google Maps unavailable — Leaflet/TomTom active');
-                };
-                document.head.appendChild(s);
-            } catch(e) {
-                window._googleMapsFailed = true;
-            }
-        })();
+        window._googleMapsFailed = true; /* force Leaflet-only mode */
     </script>
 
     <!-- Leaflet (Air-Gapped / Offline Fallback) -->
@@ -232,8 +193,7 @@
         </div>
     </aside>
 
-    <!-- ==================== MAPS (DUAL ENGINE: GOOGLE MAPS + LEAFLET FALLBACK) ==================== -->
-    <div id="google-map" class="google-map" style="display:none;"></div>
+    <!-- ==================== MAP (LEAFLET) ==================== -->
     <div id="map"></div>
 
     <!-- ==================== 4D / 3D PERSPECTIVE ROAD CANVAS ==================== -->
