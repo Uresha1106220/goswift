@@ -35,6 +35,7 @@ import httpx
 SECRET_KEY = os.getenv("GOSWIFT_SECRET_KEY", "goswift-dev-secret-change-in-production")
 OFFLINE_MODE = os.getenv("GOSWIFT_OFFLINE", "0") == "1"
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY", "z6OWt7WBJOEzT3KDHjlZ3Qln86K0DAx3")
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")   # Set in Vercel env vars
 OPENMETEO_ENABLED = os.getenv("OPENMETEO_ENABLED", "1") == "1"
 OVERPASS_URL = os.getenv("OVERPASS_URL", "https://maps.mail.ru/osm/tools/overpass/api/interpreter")
 OVERPASS_FALLBACK_URL = "https://overpass-api.de/api/interpreter"
@@ -1566,6 +1567,16 @@ async def health():
             "history_days": 7,
             "total_samples": sample_count,
         },
+    }
+
+
+# --------------- Public Config (API keys served server-side) ---------------
+@app.get("/api/config")
+async def get_config():
+    """Return public runtime config including Google Maps API key from env vars."""
+    return {
+        "google_maps_api_key": GOOGLE_MAPS_API_KEY,
+        "maps_enabled": bool(GOOGLE_MAPS_API_KEY),
     }
 
 

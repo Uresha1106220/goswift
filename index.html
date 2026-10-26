@@ -17,10 +17,44 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Map engine: Leaflet only — Google Maps removed to prevent API key error banners -->
+    <!-- Map engine: key fetched from /api/config (set GOOGLE_MAPS_API_KEY in Vercel env vars) -->
     <script>
         window._googleMapsLoaded = false;
-        window._googleMapsFailed = true; /* force Leaflet-only mode */
+        window._googleMapsFailed = false;
+
+        // Global callback required by Maps JS API
+        window.googleMapsReadyCallback = function() {
+            window._googleMapsLoaded = true;
+            console.log('[GoSwift] Google Maps loaded successfully');
+        };
+
+        // Fetch API key from backend, then inject Maps script
+        fetch('/api/config')
+            .then(function(r) { return r.json(); })
+            .then(function(cfg) {
+                if (!cfg.google_maps_api_key) {
+                    window._googleMapsFailed = true;
+                    console.info('[GoSwift] No Google Maps key configured — using Leaflet');
+                    return;
+                }
+                var s = document.createElement('script');
+                s.src = 'https://maps.googleapis.com/maps/api/js' +
+                        '?key=' + cfg.google_maps_api_key +
+                        '&libraries=places,geometry' +
+                        '&callback=googleMapsReadyCallback' +
+                        '&loading=async';
+                s.async = true;
+                s.defer = true;
+                s.onerror = function() {
+                    window._googleMapsFailed = true;
+                    console.warn('[GoSwift] Google Maps failed to load — Leaflet active');
+                };
+                document.head.appendChild(s);
+            })
+            .catch(function() {
+                window._googleMapsFailed = true;
+                console.info('[GoSwift] Config fetch failed — using Leaflet');
+            });
     </script>
 
     <!-- Leaflet (Air-Gapped / Offline Fallback) -->
