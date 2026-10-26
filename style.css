@@ -66,6 +66,19 @@ body {
     to   { opacity: 1; transform: translateY(0); }
 }
 
+/* Suppress Google Maps error banners (API key / billing overlays) */
+.gm-err-container,
+.gm-err-content,
+.gm-err-autocomplete,
+.gm-style-pbc,
+.gm-style-pbt,
+div[style*="zIndex: 1000000"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
 /* --------------- Scrollbar --------------- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg-primary); }

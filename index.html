@@ -17,21 +17,49 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
-    <!-- Google Maps JavaScript API (async, with graceful fallback to Leaflet on error) -->
+    <!-- Google Maps: loaded dynamically to avoid API banner errors on page load -->
     <script>
         window._googleMapsLoaded = false;
         window._googleMapsFailed = false;
-        function onGoogleMapsError() {
-            window._googleMapsFailed = true;
-            console.warn('[GoSwift] Google Maps API unavailable — using Leaflet/TomTom fallback');
-            var el = document.getElementById('google-map');
-            if (el) el.style.display = 'none';
+
+        // Global callback required by Google Maps JS API
+        window.googleMapsReadyCallback = function() {
+            window._googleMapsLoaded = true;
+        };
+
+        // Suppress any Google Maps error overlay injected into the DOM
+        function _suppressGoogleMapsError() {
+            var style = document.createElement('style');
+            style.textContent = [
+                '.gm-err-container { display:none!important; }',
+                '.gm-err-content { display:none!important; }',
+                '[src*="maps.googleapis.com/maps/api/js/"] ~ div.gm-style div:empty { display:none; }',
+                'body > div:not(#app):not(#loading-overlay) { overflow:hidden; }'
+            ].join('');
+            document.head.appendChild(style);
         }
-    </script>
-    <script async
-        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao&libraries=places,geometry&loading=async"
-        onerror="onGoogleMapsError()"
-        onload="window._googleMapsLoaded=true">
+        _suppressGoogleMapsError();
+
+        // Dynamically inject Google Maps script so page works fine without it
+        (function loadGoogleMaps() {
+            try {
+                var s = document.createElement('script');
+                s.src = 'https://maps.googleapis.com/maps/api/js' +
+                        '?key=AIzaSyAOVYRIgupAurZup5y1PRh8Ismb1A3lLao' +
+                        '&libraries=places,geometry' +
+                        '&callback=googleMapsReadyCallback' +
+                        '&loading=async';
+                s.async = true;
+                s.defer = true;
+                s.onerror = function() {
+                    window._googleMapsFailed = true;
+                    console.warn('[GoSwift] Google Maps unavailable — Leaflet/TomTom active');
+                };
+                document.head.appendChild(s);
+            } catch(e) {
+                window._googleMapsFailed = true;
+            }
+        })();
     </script>
 
     <!-- Leaflet (Air-Gapped / Offline Fallback) -->
