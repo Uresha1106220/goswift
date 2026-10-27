@@ -1586,6 +1586,9 @@
     // === SECTION 17: EVENT HANDLERS ===
 
     async function handleCalculateRoute() {
+        // Close any open map popups before calculating
+        if (state.map) state.map.closePopup();
+
         const oVal = document.getElementById('input-origin')?.value.trim();
         const dVal = document.getElementById('input-destination')?.value.trim();
 
@@ -1966,7 +1969,7 @@
                 color: '#fff',
                 weight: 2,
                 fillOpacity: 1
-            }).addTo(state.map).bindTooltip('🚦 Signal', { permanent: false });
+            }).addTo(state.map);
             state.roadSignalMarkers.push(sigDot);
         }
 

@@ -53,6 +53,7 @@ body {
 .hud-hidden {
     display: none !important;
     opacity: 0 !important;
+    visibility: hidden !important;
     pointer-events: none !important;
 }
 .hud-visible {
@@ -1131,7 +1132,6 @@ body.theme-day .bottom-bar {
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 18px;
     padding: 10px 16px;
-    display: flex;
     align-items: center;
     gap: 12px;
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
@@ -1181,10 +1181,9 @@ body.theme-day .hud-turn-street { color: #475569; }
 /* Top Speedometer & Speed Limit Card (Right) */
 .hud-speed-card {
     position: absolute;
-    bottom: 90px;       /* above the floating drive/theme buttons */
+    bottom: 90px;
     right: 14px;
     top: auto;
-    display: flex;
     align-items: center;
     gap: 8px;
 }
@@ -1286,7 +1285,6 @@ body.theme-day .hud-speed-val { color: #0f172a; }
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 28px;
     padding: 6px 14px;
-    display: flex;
     align-items: center;
     gap: 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
