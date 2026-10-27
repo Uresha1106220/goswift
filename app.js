@@ -374,7 +374,6 @@
         darkLayer.addTo(state.map);
         state.tileLayer = darkLayer;
 
-        L.control.layers({ "Dark": darkLayer, "TomTom": tomtomLayer, "OSM": osmLayer }, null, { position: 'topleft' }).addTo(state.map);
         L.control.zoom({ position: 'topright' }).addTo(state.map);
         L.control.scale({ position: 'bottomleft', imperial: false }).addTo(state.map);
 
