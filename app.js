@@ -16,13 +16,13 @@
         COUNTDOWN_FPS: 10,
         MAX_ALTERNATIVES: 3,
         CONGESTION_COLORS: {
-            free: '#22c55e',
-            light: '#84cc16',
-            moderate: '#eab308',
+            free: '#2563eb',
+            light: '#3b82f6',
+            moderate: '#f59e0b',
             heavy: '#f97316',
             standstill: '#ef4444'
         },
-        ROUTE_COLORS: ['#4CAF50', '#FF9800', '#2196F3'],
+        ROUTE_COLORS: ['#2563eb', '#3b82f6', '#60a5fa'],
         CONFIDENCE_COLORS: { high: '#22c55e', medium: '#eab308', low: '#ef4444' },
         TILE_OSM: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
         TILE_DARK: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
@@ -601,16 +601,31 @@
         cardsEl.innerHTML = '';
 
         routes.forEach((route, idx) => {
+            // Ensure primary route color is navigation blue
+            route.color = idx === 0 ? '#2563eb' : (CONFIG.ROUTE_COLORS[idx] || '#60a5fa');
+
             // Draw segments on map
             route.segments.forEach(seg => {
                 const latlngs = seg.coords.map(c => [c[0], c[1]]);
-                const isSelected = route.id === state.selectedRouteId;
+                const isSelected = route.id === state.selectedRouteId || (!state.selectedRouteId && idx === 0);
+
+                // Google Maps style navigation blue
+                let segColor = '#2563eb';
+                if (seg.congestion === 'standstill' || seg.congestion === 'heavy') {
+                    segColor = CONFIG.CONGESTION_COLORS[seg.congestion];
+                } else if (seg.congestion === 'moderate') {
+                    segColor = '#f59e0b';
+                } else {
+                    segColor = '#2563eb';
+                }
+
+                const lineColor = isSelected ? segColor : '#94a3b8';
 
                 // Leaflet polyline
                 if (state.map) {
                     const poly = L.polyline(latlngs, {
-                        color: CONFIG.CONGESTION_COLORS[seg.congestion] || route.color,
-                        weight: isSelected ? 7 : 4,
+                        color: lineColor,
+                        weight: isSelected ? 8 : 5,
                         opacity: isSelected ? 1.0 : 0.55,
                         lineJoin: 'round',
                         lineCap: 'round'
@@ -622,6 +637,7 @@
                         'Ratio: ' + (seg.speed_ratio * 100).toFixed(0) + '%'
                     );
                     poly._routeId = route.id;
+                    poly._segColor = segColor;
                     state.routeLayers.push(poly);
                 }
 
@@ -631,13 +647,14 @@
                     const gPoly = new google.maps.Polyline({
                         path: gCoords,
                         geodesic: true,
-                        strokeColor: CONFIG.CONGESTION_COLORS[seg.congestion] || route.color,
-                        strokeOpacity: isSelected ? 1.0 : 0.6,
-                        strokeWeight: isSelected ? 7 : 4,
+                        strokeColor: lineColor,
+                        strokeOpacity: isSelected ? 1.0 : 0.55,
+                        strokeWeight: isSelected ? 8 : 5,
                         zIndex: isSelected ? 10 : 5,
                         map: state.googleMap
                     });
                     gPoly._routeId = route.id;
+                    gPoly._segColor = segColor;
                     gPoly.addListener('click', () => selectRoute(route.id));
                     state.googleRoutePolylines.push(gPoly);
                 }
@@ -699,10 +716,14 @@
             c.classList.toggle('selected', c.dataset.routeId === routeId);
         });
 
-        // Update polyline weights
+        // Update polyline weights and colors
         state.routeLayers.forEach(l => {
             const isSelected = l._routeId === routeId;
-            l.setStyle({ weight: isSelected ? 7 : 4, opacity: isSelected ? 1.0 : 0.55 });
+            l.setStyle({
+                weight: isSelected ? 8 : 5,
+                opacity: isSelected ? 1.0 : 0.55,
+                color: isSelected ? (l._segColor || '#2563eb') : '#94a3b8'
+            });
             if (isSelected) l.bringToFront();
         });
 
@@ -710,8 +731,9 @@
             state.googleRoutePolylines.forEach(p => {
                 const isSelected = p._routeId === routeId;
                 p.setOptions({
-                    strokeWeight: isSelected ? 7 : 4,
+                    strokeWeight: isSelected ? 8 : 5,
                     strokeOpacity: isSelected ? 1.0 : 0.55,
+                    strokeColor: isSelected ? (p._segColor || '#2563eb') : '#94a3b8',
                     zIndex: isSelected ? 10 : 5
                 });
             });
