@@ -1181,8 +1181,9 @@ body.theme-day .hud-turn-street { color: #475569; }
 /* Top Speedometer & Speed Limit Card (Right) */
 .hud-speed-card {
     position: absolute;
-    top: 60px;
+    bottom: 90px;       /* above the floating drive/theme buttons */
     right: 14px;
+    top: auto;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1660,7 +1661,7 @@ body.theme-day .hud-round-btn {
     }
 
     .hud-turn-card { top: 54px; left: 10px; }
-    .hud-speed-card { top: 54px; right: 10px; }
+    .hud-speed-card { bottom: 90px; right: 10px; top: auto; }
     .hud-minimap-card { bottom: 78px; left: 10px; width: 76px; height: 76px; }
     .hud-current-street { bottom: 78px; right: 10px; font-size: 11px; }
     .hud-bottom-dock { bottom: 10px; left: 10px; right: 10px; }

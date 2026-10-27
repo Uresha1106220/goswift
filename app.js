@@ -67,13 +67,20 @@
         isDriving: false,
         driveProgressIndex: 0,
         driveTimer: null,
-        currentSpeed: 24,
-        speedLimit: 50,
+        signalCountdownTimer: null,
+        arrivalTimer: null,
+        gpsWatchId: null,
+        navRoute: null,
+        navCoords: null,
+        navStartTime: null,
+        navTotalKm: 0,
+        currentSpeed: 0,
+        speedLimit: 0,
         miniMap: null,
         miniMapPolyline: null,
         miniMapMarker: null,
         hudSignalPhase: 'green',
-        hudSignalTimer: 24,
+        hudSignalTimer: 0,     // 0 until route loaded
         viewMode: '2d',
         weather4D: 'clear',
         time4D: 'night',
@@ -367,7 +374,7 @@
         darkLayer.addTo(state.map);
         state.tileLayer = darkLayer;
 
-        L.control.layers({ "Dark": darkLayer, "TomTom": tomtomLayer, "OSM": osmLayer }, null, { position: 'topright' }).addTo(state.map);
+        L.control.layers({ "Dark": darkLayer, "TomTom": tomtomLayer, "OSM": osmLayer }, null, { position: 'topleft' }).addTo(state.map);
         L.control.zoom({ position: 'topright' }).addTo(state.map);
         L.control.scale({ position: 'bottomleft', imperial: false }).addTo(state.map);
 
@@ -1391,11 +1398,16 @@
     function startClock() {
         function tick() {
             const now = new Date();
+            const hh = now.getHours().toString().padStart(2, '0');
+            const mm = now.getMinutes().toString().padStart(2, '0');
+            const ss = now.getSeconds().toString().padStart(2, '0');
+            // Update header clock if element exists
             const el = document.getElementById('clock-display');
-            if (el) {
-                el.textContent = now.getHours().toString().padStart(2, '0') + ':' +
-                    now.getMinutes().toString().padStart(2, '0') + ':' +
-                    now.getSeconds().toString().padStart(2, '0');
+            if (el) el.textContent = `${hh}:${mm}:${ss}`;
+            // When not navigating, show current time in the arrival slot
+            if (!state.isDriving) {
+                const arrEl = document.getElementById('hud-stat-arrival');
+                if (arrEl) arrEl.textContent = `${hh}:${mm}`;
             }
         }
         tick();
@@ -1944,15 +1956,19 @@
             });
         }
 
-        // 2. Traffic Signal with live countdown & lane guidance on road
+        // 2. Traffic Signal marker — rendered as small dot only, countdown shown in center HUD pill (not duplicated here)
         if (allCoords.length > 6) {
             const sigIdx = Math.floor(allCoords.length * 0.45);
             const sigPt = allCoords[sigIdx];
-            const roadSigMarker = L.marker([sigPt[0], sigPt[1]], {
-                icon: createRoadSignalPillIcon(state.hudSignalTimer, state.hudSignalPhase),
-                zIndexOffset: 900
-            }).addTo(state.map);
-            state.roadSignalMarkers.push(roadSigMarker);
+            // Small traffic light dot marker (not the big pill — that's the center HUD)
+            const sigDot = L.circleMarker([sigPt[0], sigPt[1]], {
+                radius: 8,
+                fillColor: state.hudSignalPhase === 'green' ? '#22c55e' : '#ef4444',
+                color: '#fff',
+                weight: 2,
+                fillOpacity: 1
+            }).addTo(state.map).bindTooltip('🚦 Signal', { permanent: false });
+            state.roadSignalMarkers.push(sigDot);
         }
 
         // 3. Speed camera alert marker on road
@@ -1967,6 +1983,8 @@
         }
     }
 
+    // === NAVIGATION ENGINE: Real GPS + Simulation Fallback ===
+
     function startDriveSimulation() {
         if (!state.routes.length) {
             showToast('Calculate a route first to start navigation', 'warning');
@@ -1978,17 +1996,112 @@
         if (allCoords.length < 2) return;
 
         state.isDriving = true;
+        state.navRoute = route;
+        state.navCoords = allCoords;
+        state.navStartTime = Date.now();
+        state.navTotalKm = route.distance_km;
+
+        // Initialize signal timer properly
+        state.hudSignalTimer = 28;
+        state.hudSignalPhase = 'green';
+
         const driveBtn = document.getElementById('btn-hud-drive');
-        if (driveBtn) {
-            driveBtn.innerHTML = '<span>⏸</span>';
-            driveBtn.classList.add('active');
+        if (driveBtn) { driveBtn.innerHTML = '<span id="hud-drive-icon">⏸</span>'; driveBtn.classList.add('active'); }
+
+        // Switch dock label to "arrival"
+        const lbl = document.getElementById('hud-stat-arrival-lbl');
+        if (lbl) lbl.textContent = 'arrival';
+
+        showToast('🛰️ Navigation started — tracking location', 'success', 2500);
+
+        // Try real GPS first
+        if (navigator.geolocation) {
+            showToast('📍 Using real GPS location', 'info', 2000);
+            _startGPSNavigation(route, allCoords);
+        } else {
+            showToast('📱 GPS unavailable — running simulation', 'info', 2000);
+            _startSimulationNavigation(route, allCoords);
         }
-        showToast('Navigation Drive Started', 'success', 2000);
+
+        // Start real-time signal countdown (every 1 second, independent of movement)
+        _startSignalCountdown();
+
+        // Start live arrival time updater (every 5 seconds)
+        _startArrivalUpdater(route);
+    }
+
+    function _startGPSNavigation(route, allCoords) {
+        // Clear any previous simulation
+        if (state.driveTimer) { clearInterval(state.driveTimer); state.driveTimer = null; }
+        if (state.gpsWatchId != null) { navigator.geolocation.clearWatch(state.gpsWatchId); }
+
+        let simFallbackTimer = null;
+        let gotRealGPS = false;
+
+        // Fallback: if no GPS fix within 4s, switch to simulation
+        simFallbackTimer = setTimeout(() => {
+            if (!gotRealGPS) {
+                showToast('GPS fix failed — using simulation', 'warning', 2000);
+                _startSimulationNavigation(route, allCoords);
+            }
+        }, 4000);
+
+        state.gpsWatchId = navigator.geolocation.watchPosition(
+            (pos) => {
+                gotRealGPS = true;
+                clearTimeout(simFallbackTimer);
+
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                const speedMs = pos.coords.speed || 0;
+                const speedKmh = Math.round(speedMs * 3.6);
+                const heading = pos.coords.heading || 0;
+
+                // Move car marker to real GPS position
+                if (state.carMarker) {
+                    state.carMarker.setLatLng([lat, lng]);
+                    state.carMarker.setIcon(createCarIcon(heading));
+                }
+
+                // Pan map to follow
+                if (state.map) {
+                    state.map.panTo([lat, lng], { animate: true, duration: 0.5 });
+                }
+
+                // Update speedometer from real GPS speed
+                updateSpeedometer(speedKmh > 0 ? speedKmh : 0);
+
+                // Snap to nearest route coord to compute progress
+                const snapIdx = _snapToRoute(lat, lng, allCoords);
+                const progressRatio = snapIdx / allCoords.length;
+                const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
+
+                _updateNavStats(remKm, route);
+            },
+            (err) => {
+                clearTimeout(simFallbackTimer);
+                console.warn('[GoSwift] GPS error:', err.message);
+                showToast('GPS unavailable — switching to simulation', 'warning', 2000);
+                _startSimulationNavigation(route, allCoords);
+            },
+            { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+        );
+    }
+
+    function _snapToRoute(lat, lng, coords) {
+        let best = 0, bestDist = Infinity;
+        for (let i = 0; i < coords.length; i++) {
+            const d = Math.hypot(coords[i][0] - lat, coords[i][1] - lng);
+            if (d < bestDist) { bestDist = d; best = i; }
+        }
+        return best;
+    }
+
+    function _startSimulationNavigation(route, allCoords) {
+        if (state.driveTimer) clearInterval(state.driveTimer);
 
         let coordIdx = state.driveProgressIndex || 0;
         const total = allCoords.length;
-
-        if (state.driveTimer) clearInterval(state.driveTimer);
 
         state.driveTimer = setInterval(() => {
             if (!state.isDriving) return;
@@ -1997,107 +2110,139 @@
             state.driveProgressIndex = coordIdx;
 
             const curr = allCoords[coordIdx];
-            const next = allCoords[(coordIdx + 1) % total];
+            const next = allCoords[Math.min(coordIdx + 1, total - 1)];
             const bearing = calculateBearing(curr[0], curr[1], next[0], next[1]);
 
-            // Update car marker (Leaflet)
+            // Move car marker
             if (state.carMarker) {
                 state.carMarker.setLatLng([curr[0], curr[1]]);
                 state.carMarker.setIcon(createCarIcon(bearing));
             }
 
-            // Update car marker (Google Maps)
-            if (state.usingGoogleMaps && state.googleMap && window.google) {
-                if (!state.googleCarMarker) {
-                    state.googleCarMarker = new google.maps.Marker({
-                        position: { lat: curr[0], lng: curr[1] },
-                        map: state.googleMap,
-                        icon: {
-                            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-                            scale: 6,
-                            fillColor: '#dc2626',
-                            fillOpacity: 1,
-                            strokeColor: '#ffffff',
-                            strokeWeight: 2,
-                            rotation: bearing
-                        },
-                        zIndex: 9999
-                    });
-                } else {
-                    state.googleCarMarker.setPosition({ lat: curr[0], lng: curr[1] });
-                    const icon = state.googleCarMarker.getIcon();
-                    if (icon) {
-                        icon.rotation = bearing;
-                        state.googleCarMarker.setIcon(icon);
-                    }
-                }
-                if (coordIdx % 4 === 0) {
-                    state.googleMap.panTo({ lat: curr[0], lng: curr[1] });
-                }
-            }
-
-            // Smoothly pan map with vehicle
+            // Pan map every 4 steps
             if (coordIdx % 4 === 0 && state.map) {
-                state.map.panTo([curr[0], curr[1]], { animate: true, duration: 0.3 });
+                state.map.panTo([curr[0], curr[1]], { animate: true, duration: 0.4 });
             }
 
-            // Dynamically simulate speed
+            // Simulate speed (slow near signal, variable otherwise)
             const progressRatio = coordIdx / total;
-            const isNearSignal = Math.abs(progressRatio - 0.45) < 0.08;
-            let targetSpeed = 48;
-            if (isNearSignal) {
-                targetSpeed = state.hudSignalPhase === 'red' ? 0 : 26;
-            } else {
-                targetSpeed = 45 + Math.round(Math.sin(coordIdx) * 8);
-            }
-            updateSpeedometer(targetSpeed);
+            const nearSignal = Math.abs(progressRatio - 0.45) < 0.08;
+            const simSpeed = nearSignal
+                ? (state.hudSignalPhase === 'red' ? 0 : 22)
+                : (42 + Math.round(Math.sin(coordIdx * 0.3) * 10));
+            updateSpeedometer(simSpeed);
 
-            // Signal countdown decrement
+            // Update remaining distance
+            const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
+            _updateNavStats(remKm, route);
+
+        }, 150);
+    }
+
+    function _startSignalCountdown() {
+        if (state.signalCountdownTimer) clearInterval(state.signalCountdownTimer);
+
+        // Set initial timer
+        if (!state.hudSignalTimer || state.hudSignalTimer <= 0) {
+            state.hudSignalTimer = 28;
+            state.hudSignalPhase = 'green';
+        }
+
+        state.signalCountdownTimer = setInterval(() => {
+            if (!state.isDriving) return;
+
             state.hudSignalTimer--;
             if (state.hudSignalTimer <= 0) {
+                // Toggle phase: green->red->green with realistic timings
                 state.hudSignalPhase = state.hudSignalPhase === 'green' ? 'red' : 'green';
-                state.hudSignalTimer = state.hudSignalPhase === 'green' ? 24 : 32;
+                state.hudSignalTimer = state.hudSignalPhase === 'green' ? 28 : 18;
             }
 
-            // Update Road Signal Pill Marker
+            // Update ONLY the center HUD signal circle (remove road pill duplicate)
+            const circle = document.getElementById('hud-signal-circle');
+            if (circle) {
+                circle.textContent = state.hudSignalTimer;
+                circle.className = 'hud-signal-circle ' + state.hudSignalPhase;
+            }
+
+            // Update signal lane pill container color
+            const pill = document.getElementById('hud-signal-lane-pill');
+            if (pill) {
+                pill.classList.toggle('phase-red', state.hudSignalPhase === 'red');
+                pill.classList.toggle('phase-green', state.hudSignalPhase === 'green');
+            }
+
+            // Keep road dot markers in sync with phase color
             state.roadSignalMarkers.forEach(m => {
-                m.setIcon(createRoadSignalPillIcon(state.hudSignalTimer, state.hudSignalPhase));
+                if (m.setStyle) {
+                    m.setStyle({ fillColor: state.hudSignalPhase === 'green' ? '#22c55e' : '#ef4444' });
+                }
             });
+        }, 1000);
+    }
 
-            // Update Center HUD Signal Pill
-            const centerSignal = document.getElementById('hud-signal-circle');
-            if (centerSignal) {
-                centerSignal.textContent = state.hudSignalTimer;
-                centerSignal.className = 'hud-signal-circle ' + state.hudSignalPhase;
+    function _startArrivalUpdater(route) {
+        if (state.arrivalTimer) clearInterval(state.arrivalTimer);
+
+        state.arrivalTimer = setInterval(() => {
+            if (!state.isDriving) return;
+
+            // Recalculate ETA based on elapsed time and remaining progress
+            const elapsed = (Date.now() - state.navStartTime) / 1000;
+            const progressRatio = state.driveProgressIndex / (state.navCoords ? state.navCoords.length : 1);
+            const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
+            const avgSpeedKmh = Math.max(10, state.currentSpeed || 40);
+            const remSec = (remKm / avgSpeedKmh) * 3600;
+            const remMin = Math.round(remSec / 60);
+
+            const statTime = document.getElementById('hud-stat-time');
+            const statArrival = document.getElementById('hud-stat-arrival');
+
+            if (statTime) statTime.textContent = remMin > 0 ? remMin : '< 1';
+
+            if (statArrival) {
+                const arr = new Date(Date.now() + remSec * 1000);
+                statArrival.textContent = arr.getHours().toString().padStart(2, '0') + ':' +
+                                          arr.getMinutes().toString().padStart(2, '0');
             }
+        }, 5000);
+    }
 
-            // Update remaining distance and turn distance
-            const remKm = Math.max(0.1, (route.distance_km * (1 - progressRatio)));
-            const statDist = document.getElementById('hud-stat-dist');
-            if (statDist) statDist.textContent = remKm.toFixed(1);
+    function _updateNavStats(remKm, route) {
+        const statDist = document.getElementById('hud-stat-dist');
+        if (statDist) statDist.textContent = remKm.toFixed(1);
 
-            const turnDistEl = document.getElementById('hud-turn-dist');
-            if (turnDistEl) {
-                const turnDist = (remKm * 0.6);
-                if (turnDist >= 1) turnDistEl.innerHTML = turnDist.toFixed(1) + ' <span class="unit">km</span>';
-                else turnDistEl.innerHTML = Math.max(50, Math.round(turnDist * 1000)) + ' <span class="unit">m</span>';
-            }
-
-        }, 130);
+        const turnDistEl = document.getElementById('hud-turn-dist');
+        if (turnDistEl) {
+            const d = remKm * 0.6;
+            if (d >= 1) turnDistEl.innerHTML = d.toFixed(1) + ' <span class="unit">km</span>';
+            else turnDistEl.innerHTML = Math.max(50, Math.round(d * 1000)) + ' <span class="unit">m</span>';
+        }
     }
 
     function pauseDriveSimulation() {
         state.isDriving = false;
-        if (state.driveTimer) {
-            clearInterval(state.driveTimer);
-            state.driveTimer = null;
+
+        if (state.driveTimer) { clearInterval(state.driveTimer); state.driveTimer = null; }
+        if (state.signalCountdownTimer) { clearInterval(state.signalCountdownTimer); state.signalCountdownTimer = null; }
+        if (state.arrivalTimer) { clearInterval(state.arrivalTimer); state.arrivalTimer = null; }
+        if (state.gpsWatchId != null) {
+            navigator.geolocation.clearWatch(state.gpsWatchId);
+            state.gpsWatchId = null;
         }
+
+        updateSpeedometer(0);
+
+        // Switch dock label back to "now"
+        const lbl = document.getElementById('hud-stat-arrival-lbl');
+        if (lbl) lbl.textContent = 'now';
+
         const driveBtn = document.getElementById('btn-hud-drive');
         if (driveBtn) {
-            driveBtn.innerHTML = '<span>▶</span>';
+            driveBtn.innerHTML = '<span id="hud-drive-icon">▶</span>';
             driveBtn.classList.remove('active');
         }
-        showToast('Navigation Drive Paused', 'info', 1500);
+        showToast('Navigation paused', 'info', 1500);
     }
 
     function setupMobileDrawers() {
