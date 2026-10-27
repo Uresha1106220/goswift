@@ -683,7 +683,7 @@
             updateGreenWave(data.green_wave);
             startCountdowns();
             const selRoute = state.routes.find(r => r.id === (routeId || state.selectedRouteId));
-            if (selRoute) renderRoadHUDMarkers(selRoute, state.signals);
+            if (selRoute && state.isDriving) renderRoadHUDMarkers(selRoute, state.signals);
         } catch (e) {
             console.error('Failed to load signals:', e);
         }
@@ -1892,7 +1892,22 @@
                                       arrDate.getMinutes().toString().padStart(2, '0');
         }
 
-        // Reveal all HUD overlays now that a real route exists
+        // Update MiniMap preview if needed
+        const allCoords = route.segments.flatMap(s => s.coords);
+        if (allCoords.length) {
+            initMiniMap(allCoords);
+        }
+
+        // Only reveal in-car HUD overlays and road car marker if actively navigating!
+        if (state.isDriving) {
+            showNavHUD();
+            renderRoadHUDMarkers(route, state.signals);
+        } else {
+            hideNavHUD();
+        }
+    }
+
+    function showNavHUD() {
         ['hud-turn-card','hud-speed-card','hud-signal-lane-pill','hud-current-street'].forEach(id => {
             const el = document.getElementById(id);
             if (el) {
@@ -1900,29 +1915,50 @@
                 el.classList.add('hud-visible');
             }
         });
-        // minimap uses block layout, not flex
         const minimapCard = document.getElementById('hud-minimap-card');
         if (minimapCard) {
             minimapCard.classList.remove('hud-hidden');
             minimapCard.style.display = 'block';
         }
+    }
 
-        // Initialize or update MiniMap
-        const allCoords = route.segments.flatMap(s => s.coords);
-        if (allCoords.length) {
-            initMiniMap(allCoords);
-            renderRoadHUDMarkers(route, state.signals);
+    function hideNavHUD() {
+        ['hud-turn-card','hud-speed-card','hud-signal-lane-pill','hud-current-street','hud-minimap-card'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.classList.add('hud-hidden');
+                el.classList.remove('hud-visible');
+            }
+        });
+        const minimapCard = document.getElementById('hud-minimap-card');
+        if (minimapCard) minimapCard.style.display = 'none';
+
+        if (state.carMarker && state.map) {
+            state.map.removeLayer(state.carMarker);
+            state.carMarker = null;
         }
+        if (state.googleCarMarker) {
+            state.googleCarMarker.setMap(null);
+            state.googleCarMarker = null;
+        }
+        state.roadSignalMarkers.forEach(m => state.map && state.map.removeLayer(m));
+        state.roadSignalMarkers = [];
+        state.roadAlertMarkers.forEach(m => state.map && state.map.removeLayer(m));
+        state.roadAlertMarkers = [];
     }
 
     function renderRoadHUDMarkers(route, signals) {
         if (!state.map) return;
         // Clear previous road HUD markers
         if (state.carMarker) { state.map.removeLayer(state.carMarker); state.carMarker = null; }
+        if (state.googleCarMarker) { state.googleCarMarker.setMap(null); state.googleCarMarker = null; }
         state.roadSignalMarkers.forEach(m => state.map.removeLayer(m));
         state.roadSignalMarkers = [];
         state.roadAlertMarkers.forEach(m => state.map.removeLayer(m));
         state.roadAlertMarkers = [];
+
+        // ONLY render active navigation road markers if driving!
+        if (!state.isDriving) return;
 
         const allCoords = route.segments.flatMap(s => s.coords);
         if (!allCoords.length) return;
@@ -2000,6 +2036,10 @@
         state.navCoords = allCoords;
         state.navStartTime = Date.now();
         state.navTotalKm = route.distance_km;
+
+        // Reveal the in-car HUD overlays and road markers for active driving
+        showNavHUD();
+        renderRoadHUDMarkers(route, state.signals);
 
         // Initialize signal timer properly
         state.hudSignalTimer = 28;
@@ -2232,6 +2272,9 @@
         }
 
         updateSpeedometer(0);
+
+        // Hide navigation HUD overlays and car marker when paused/stopped
+        hideNavHUD();
 
         // Switch dock label back to "now"
         const lbl = document.getElementById('hud-stat-arrival-lbl');
@@ -2997,6 +3040,7 @@
         // Reset SVG bar to zero
         const barEl = document.getElementById('hud-speed-bar');
         if (barEl) barEl.style.strokeDashoffset = 201;
+        hideNavHUD();
     }
 
     function setupEventListeners() {
