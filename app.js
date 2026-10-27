@@ -2085,6 +2085,71 @@
             state.gpsWatchId = null;
         }
 
+        // Cancel any pending marker animation loop
+        if (state._markerAnimRAF) {
+            cancelAnimationFrame(state._markerAnimRAF);
+            state._markerAnimRAF = null;
+        }
+
+        /**
+         * _animateMarker: Smoothly interpolates the car marker from its current
+         * position to the new GPS fix using requestAnimationFrame — like Google Maps.
+         * Also smoothly rotates the heading icon.
+         */
+        function _animateMarker(toLat, toLng, toHeading, durationMs) {
+            if (state._markerAnimRAF) {
+                cancelAnimationFrame(state._markerAnimRAF);
+                state._markerAnimRAF = null;
+            }
+
+            if (!state.carMarker) return;
+
+            const fromPos = state.carMarker.getLatLng();
+            const fromLat = fromPos.lat;
+            const fromLng = fromPos.lng;
+            const fromHeading = state._animHeading != null ? state._animHeading : toHeading;
+
+            // Normalize heading delta to shortest arc
+            let headingDelta = toHeading - fromHeading;
+            if (headingDelta > 180) headingDelta -= 360;
+            if (headingDelta < -180) headingDelta += 360;
+
+            const startTime = performance.now();
+            const dur = Math.max(300, Math.min(durationMs, 3000)); // clamp 300ms – 3s
+
+            function step(now) {
+                if (!state.isDriving) return; // stop if navigation paused
+                const elapsed = now - startTime;
+                const t = Math.min(1, elapsed / dur);
+                // Ease-out cubic for natural deceleration
+                const ease = 1 - Math.pow(1 - t, 3);
+
+                const lat = fromLat + (toLat - fromLat) * ease;
+                const lng = fromLng + (toLng - fromLng) * ease;
+                const h   = fromHeading + headingDelta * ease;
+
+                state.carMarker.setLatLng([lat, lng]);
+                state._animHeading = h;
+
+                // Rotate just the SVG div — no new icon creation each frame
+                const el = state.carMarker.getElement();
+                if (el) {
+                    const inner = el.querySelector('.nav-car-marker');
+                    if (inner) inner.style.transform = `rotate(${Math.round(h)}deg)`;
+                }
+
+                if (t < 1) {
+                    state._markerAnimRAF = requestAnimationFrame(step);
+                } else {
+                    state._markerAnimRAF = null;
+                    // Set final icon (cleans up inline style, keeps rotation correct)
+                    state.carMarker.setIcon(createCarIcon(toHeading));
+                }
+            }
+
+            state._markerAnimRAF = requestAnimationFrame(step);
+        }
+
         function handlePosition(pos) {
             if (!state.isDriving) return;
 
@@ -2105,30 +2170,32 @@
             }
 
             // 2. Real heading / bearing
-            let heading = 0;
+            let heading = state.lastHeading || 0;
             if (pos.coords.heading != null && !isNaN(pos.coords.heading) && pos.coords.heading >= 0) {
                 heading = pos.coords.heading;
+                state.lastHeading = heading;
             } else if (state.lastGPS) {
                 const movedDist = distanceInMeters(state.lastGPS.lat, state.lastGPS.lng, lat, lng);
                 if (movedDist >= 2) {
                     heading = calculateBearing(state.lastGPS.lat, state.lastGPS.lng, lat, lng);
                     state.lastHeading = heading;
-                } else if (state.lastHeading != null) {
-                    heading = state.lastHeading;
                 }
             }
 
+            // How long since last GPS fix (used as animation duration)
+            const msSinceLast = state.lastGPS ? Math.max(500, now - state.lastGPS.time) : 1500;
             state.lastGPS = { lat, lng, time: now };
 
-            // 3. Move vehicle marker to user's real GPS position
+            // 3. Create marker on first fix, then animate smoothly between fixes
             if (!state.carMarker) {
+                state._animHeading = heading;
                 state.carMarker = L.marker([lat, lng], {
                     icon: createCarIcon(heading),
                     zIndexOffset: 1000
                 }).addTo(state.map);
             } else {
-                state.carMarker.setLatLng([lat, lng]);
-                state.carMarker.setIcon(createCarIcon(heading));
+                // Animate smoothly from current position → new GPS position
+                _animateMarker(lat, lng, heading, msSinceLast);
             }
 
             // Google Maps marker if active
@@ -2159,9 +2226,9 @@
                 state.googleMap.panTo({ lat, lng });
             }
 
-            // 4. Smoothly follow user with camera
+            // 4. Smoothly follow user with camera (pan to real GPS, not interpolated pos)
             if (state.map) {
-                state.map.panTo([lat, lng], { animate: true, duration: 0.6 });
+                state.map.panTo([lat, lng], { animate: true, duration: 0.8 });
             }
 
             // 5. Update real speedometer
@@ -2200,7 +2267,7 @@
         state.gpsWatchId = navigator.geolocation.watchPosition(
             handlePosition,
             handleError,
-            { enableHighAccuracy: true, maximumAge: 1000, timeout: 25000 }
+            { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
         );
     }
 
@@ -2319,6 +2386,12 @@
             navigator.geolocation.clearWatch(state.gpsWatchId);
             state.gpsWatchId = null;
         }
+        // Cancel any in-progress marker smooth animation
+        if (state._markerAnimRAF) {
+            cancelAnimationFrame(state._markerAnimRAF);
+            state._markerAnimRAF = null;
+        }
+        state._animHeading = null;
 
         updateSpeedometer(0);
 
