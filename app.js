@@ -371,9 +371,23 @@
         tomtomLayer.addTo(state.map);
         state.tileLayer = tomtomLayer;
 
-        L.control.layers({ "TomTom": tomtomLayer, "Standard OSM": osmLayer }, null, { position: 'topleft' }).addTo(state.map);
         L.control.zoom({ position: 'topright' }).addTo(state.map);
         L.control.scale({ position: 'bottomleft', imperial: false }).addTo(state.map);
+
+        // Passive user location centering on first load if permitted
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                pos => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    if (state.map && !state.origin && !state.destination) {
+                        state.map.setView([lat, lng], 13);
+                    }
+                },
+                () => {},
+                { enableHighAccuracy: false, timeout: 5000, maximumAge: 60000 }
+            );
+        }
 
         setTimeout(() => state.map && state.map.invalidateSize(), 100);
         setTimeout(() => state.map && state.map.invalidateSize(), 600);
@@ -425,19 +439,60 @@
         });
     }
 
+    function createLiveLocationIcon() {
+        return L.divIcon({
+            className: 'live-location-marker-container',
+            html: `
+                <div class="live-location-pin">
+                    <div class="live-loc-pulse"></div>
+                    <div class="live-loc-dot"></div>
+                </div>
+            `,
+            iconSize: [36, 36],
+            iconAnchor: [18, 18]
+        });
+    }
+
+    function setLiveLocationAsOrigin(onSuccess) {
+        if (!navigator.geolocation) {
+            showToast('Geolocation is not supported by your device', 'error', 3000);
+            return;
+        }
+        showToast('📍 Acquiring your live location...', 'info', 2000);
+        navigator.geolocation.getCurrentPosition(
+            pos => {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                setOrigin(L.latLng(lat, lng), 'Your Location (Live GPS)');
+                if (state.map) {
+                    state.map.setView([lat, lng], Math.max(state.map.getZoom(), 15), { animate: true });
+                }
+                showToast('📍 Live location set as starting point', 'success', 2500);
+                if (typeof onSuccess === 'function') onSuccess(lat, lng);
+            },
+            err => {
+                console.warn('[GoSwift] Geolocation note:', err);
+                showToast('📍 Please allow GPS permission to use live location', 'warning', 4000);
+            },
+            { enableHighAccuracy: true, timeout: 9000, maximumAge: 10000 }
+        );
+    }
+
     function setOrigin(latlng, label) {
         if (!latlng) return;
         const lat = typeof latlng.lat === 'function' ? latlng.lat() : latlng.lat;
         const lng = typeof latlng.lng === 'function' ? latlng.lng() : latlng.lng;
         state.origin = { lat, lng, label: label || '' };
         const labelText = label || (lat.toFixed(5) + ', ' + lng.toFixed(5));
+        const isLiveLoc = label && label.includes('Live');
 
         // Leaflet marker
         if (state.map) {
             if (state.originMarker) state.map.removeLayer(state.originMarker);
-            state.originMarker = L.marker([lat, lng], { icon: createMarkerIcon('#22c55e', 'A') })
+            const icon = isLiveLoc ? createLiveLocationIcon() : createMarkerIcon('#22c55e', 'A');
+            state.originMarker = L.marker([lat, lng], { icon: icon, zIndexOffset: 800 })
                 .addTo(state.map)
-                .bindPopup('<b>Origin:</b> ' + labelText);
+                .bindPopup('<b>Starting Point:</b> ' + labelText);
         }
 
         // Google Maps marker
@@ -461,7 +516,7 @@
 
         const input = document.getElementById('input-origin');
         if (input) input.value = labelText;
-        showToast('Origin: ' + (label ? label.slice(0, 30) + '...' : lat.toFixed(4) + ', ' + lng.toFixed(4)), 'info', 2000);
+        showToast('Origin: ' + (label ? label.slice(0, 30) : lat.toFixed(4) + ', ' + lng.toFixed(4)), 'info', 2000);
     }
 
     function setDestination(latlng, label) {
@@ -1595,7 +1650,7 @@
             const parsed = parseCoordInput(oVal);
             if (parsed) {
                 setOrigin(L.latLng(parsed.lat, parsed.lng));
-            } else if (oVal) {
+            } else if (oVal && !oVal.toLowerCase().includes('your location') && !oVal.toLowerCase().includes('live')) {
                 showLoading('Locating origin "' + oVal + '"...');
                 const results = await fetchGeocode(oVal);
                 if (results.length > 0) {
@@ -1618,8 +1673,31 @@
             }
         }
 
-        if (!state.origin || !state.destination) {
-            showToast('Set both origin and destination (type place name or click map)', 'warning');
+        // If destination is set but origin is empty or set to Live Location, acquire real live GPS
+        if (!state.origin && (!oVal || oVal.toLowerCase().includes('location') || oVal.toLowerCase().includes('live')) && navigator.geolocation) {
+            showLoading('📍 Getting your live location to reach destination...');
+            try {
+                const pos = await new Promise((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 8000,
+                        maximumAge: 15000
+                    });
+                });
+                setOrigin(L.latLng(pos.coords.latitude, pos.coords.longitude), 'Your Location (Live GPS)');
+            } catch (err) {
+                console.warn('[GoSwift] Live location auto-acquire error:', err);
+            }
+        }
+
+        if (!state.destination) {
+            showToast('Please enter or select a destination on the map', 'warning');
+            hideLoading();
+            return;
+        }
+
+        if (!state.origin) {
+            showToast('Please set an origin or enable GPS for live location', 'warning');
             hideLoading();
             return;
         }
@@ -2031,10 +2109,17 @@
         return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
-    function startDriveSimulation() {
+    async function startDriveSimulation() {
         if (!state.routes.length) {
-            showToast('Calculate a route first to start navigation', 'warning');
-            return;
+            const dVal = document.getElementById('input-destination')?.value.trim();
+            if (state.destination || dVal) {
+                showToast('📍 Getting live location to reach destination...', 'info', 2000);
+                await handleCalculateRoute();
+                if (!state.routes.length) return;
+            } else {
+                showToast('Please set a destination to start live navigation', 'warning', 3000);
+                return;
+            }
         }
 
         const route = state.routes.find(r => r.id === state.selectedRouteId) || state.routes[0];
@@ -2048,6 +2133,7 @@
         state.navTotalKm = route.distance_km;
         state.lastGPS = null;
         state.lastHeading = 0;
+        state._arrivalAnnounced = false;
 
         // Reveal the in-car HUD overlays
         showNavHUD();
@@ -2284,6 +2370,27 @@
         // Distance to destination
         const statDist = document.getElementById('hud-stat-dist');
         if (statDist) statDist.textContent = remKm < 10 ? remKm.toFixed(1) : Math.round(remKm);
+
+        // Check if destination is reached (within 35m or at final route node)
+        if (remKm < 0.035 || closestIdx >= allCoords.length - 1) {
+            const turnDistEl = document.getElementById('hud-turn-dist');
+            if (turnDistEl) turnDistEl.innerHTML = '0 <span class="unit">m</span>';
+
+            const turnStreetEl = document.getElementById('hud-turn-street');
+            if (turnStreetEl) turnStreetEl.textContent = '🎉 You have arrived at your destination!';
+
+            const turnIconEl = document.getElementById('hud-turn-icon');
+            if (turnIconEl) turnIconEl.textContent = '🏁';
+
+            const statTime = document.getElementById('hud-stat-time');
+            if (statTime) statTime.textContent = '0';
+
+            if (!state._arrivalAnnounced) {
+                state._arrivalAnnounced = true;
+                showToast('🎉 You have arrived at your destination!', 'success', 8000);
+            }
+            return;
+        }
 
         // Dynamic arrival time and remaining minutes based on real movement or average route pace
         const effectiveSpeed = speedKmh > 5 ? speedKmh : 32; // urban average 32 km/h when stopped
@@ -3312,15 +3419,41 @@
             }, 'destination-suggestions');
         });
 
-        // Current location
+        // Live Location buttons for Origin
+        document.getElementById('btn-use-live-origin')?.addEventListener('click', () => {
+            setLiveLocationAsOrigin();
+        });
+
         document.getElementById('btn-locate-origin')?.addEventListener('click', () => {
-            if (navigator.geolocation) {
+            setLiveLocationAsOrigin();
+        });
+
+        // Floating Recenter / Live Location Button (like Google Maps target crosshair)
+        document.getElementById('btn-hud-recenter')?.addEventListener('click', () => {
+            if (state.isDriving && state.lastGPS && state.map) {
+                state.map.setView([state.lastGPS.lat, state.lastGPS.lng], Math.max(state.map.getZoom(), 16), { animate: true });
+                showToast('📍 Centered on your live navigation location', 'info', 1500);
+            } else if (navigator.geolocation) {
+                showToast('📍 Acquiring live location...', 'info', 1200);
                 navigator.geolocation.getCurrentPosition(
                     pos => {
-                        setOrigin(L.latLng(pos.coords.latitude, pos.coords.longitude));
-                        if (state.map) state.map.setView([pos.coords.latitude, pos.coords.longitude], 13);
+                        const lat = pos.coords.latitude;
+                        const lng = pos.coords.longitude;
+                        if (state.map) {
+                            state.map.setView([lat, lng], Math.max(state.map.getZoom(), 15), { animate: true });
+                            if (!state.liveUserMarker) {
+                                state.liveUserMarker = L.marker([lat, lng], {
+                                    icon: createLiveLocationIcon(),
+                                    zIndexOffset: 900
+                                }).addTo(state.map).bindPopup('<b>Your Live Location</b>');
+                            } else {
+                                state.liveUserMarker.setLatLng([lat, lng]);
+                            }
+                        }
+                        showToast('📍 Centered on live location', 'success', 1800);
                     },
-                    () => showToast('Could not get location', 'error')
+                    () => showToast('Could not acquire GPS position. Check location permissions.', 'error', 3000),
+                    { enableHighAccuracy: true, timeout: 8000 }
                 );
             }
         });

@@ -1499,6 +1499,91 @@ body.theme-day .hud-round-btn {
     background: linear-gradient(135deg, #22c55e, #16a34a);
     border-color: rgba(255,255,255,0.3);
 }
+.hud-round-btn.btn-recenter {
+    font-size: 20px;
+    color: #60a5fa;
+}
+.hud-round-btn.btn-recenter:hover {
+    color: #93c5fd;
+    border-color: #60a5fa;
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+}
+
+/* Live Location chip in Left Panel */
+.btn-live-loc-chip {
+    background: rgba(59, 130, 246, 0.16);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    color: #60a5fa;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+.btn-live-loc-chip:hover {
+    background: rgba(59, 130, 246, 0.35);
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+body.theme-day .btn-live-loc-chip {
+    background: rgba(37, 99, 235, 0.1);
+    border: 1px solid rgba(37, 99, 235, 0.3);
+    color: #2563eb;
+}
+.live-pulse-dot {
+    width: 7px;
+    height: 7px;
+    background: #22c55e;
+    border-radius: 50%;
+    box-shadow: 0 0 6px #22c55e;
+    display: inline-block;
+    animation: liveDotBlink 1.4s ease-in-out infinite alternate;
+}
+@keyframes liveDotBlink {
+    0% { opacity: 0.4; transform: scale(0.85); }
+    100% { opacity: 1; transform: scale(1.25); }
+}
+
+/* Glowing Live Location Dot Marker (like Google Maps blue dot) */
+.live-location-marker-container {
+    background: transparent !important;
+    border: none !important;
+}
+.live-location-pin {
+    position: relative;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.live-loc-dot {
+    width: 16px;
+    height: 16px;
+    background: #3b82f6;
+    border: 3px solid #ffffff;
+    border-radius: 50%;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.95);
+    position: relative;
+    z-index: 2;
+}
+.live-loc-pulse {
+    position: absolute;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(59, 130, 246, 0.35);
+    animation: liveLocPulse 2s ease-out infinite;
+    z-index: 1;
+}
+@keyframes liveLocPulse {
+    0% { transform: scale(0.4); opacity: 1; }
+    100% { transform: scale(1.7); opacity: 0; }
+}
 
 /* ============================================================
    ROAD ELEMENTS (CAR, SIGNAL PILL, ALERTS)

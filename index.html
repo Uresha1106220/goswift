@@ -104,9 +104,14 @@
         <div class="panel-content">
             <!-- Origin -->
             <div class="form-group search-group">
-                <label class="form-label">ORIGIN</label>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
+                    <label class="form-label" style="margin:0;">ORIGIN</label>
+                    <button type="button" id="btn-use-live-origin" class="btn-live-loc-chip" title="Use current live GPS location">
+                        <span class="live-pulse-dot"></span> Live Location
+                    </button>
+                </div>
                 <div class="input-group">
-                    <input type="text" id="input-origin" class="form-input" placeholder="Enter place name or click map" autocomplete="off">
+                    <input type="text" id="input-origin" class="form-input" placeholder="Your live location or enter place" autocomplete="off">
                     <button id="btn-geocode-origin" class="btn-icon-input" title="Search Place">🔍</button>
                     <button id="btn-locate-origin" class="btn-icon-input" title="Current Location">📍</button>
                 </div>
@@ -315,8 +320,11 @@
             </button>
         </div>
 
-        <!-- Quick Floating Controls (Theme & Drive) -->
+        <!-- Quick Floating Controls (Recenter, Theme & Drive) -->
         <div class="hud-floating-controls">
+            <button id="btn-hud-recenter" class="hud-round-btn btn-recenter" title="Live Location / Recenter (like Google Maps)">
+                <span id="hud-recenter-icon">⌖</span>
+            </button>
             <button id="btn-hud-theme" class="hud-round-btn" title="Toggle Day / Night Mode">
                 <span id="hud-theme-icon">🌙</span>
             </button>
