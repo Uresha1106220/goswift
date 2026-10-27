@@ -229,54 +229,11 @@
     <!-- ==================== MAP (LEAFLET) ==================== -->
     <div id="map"></div>
 
-    <!-- ==================== 4D / 3D PERSPECTIVE ROAD CANVAS ==================== -->
-    <canvas id="view-4d-canvas" class="view-4d-canvas" style="display:none;"></canvas>
-
-    <!-- ==================== 360° STREET VIEW OVERLAY ==================== -->
-    <div id="street-view-overlay" class="street-view-overlay" style="display:none;">
-        <div class="street-view-header">
-            <div class="street-view-title-wrap">
-                <span class="sv-badge">360° STREET VIEW</span>
-                <span id="sv-street-name" class="sv-street-name">Tsvetnoy Boulevard</span>
-                <span id="sv-coords" class="sv-coords mono">28.6139, 77.2090</span>
-            </div>
-            <div class="street-view-actions">
-                <button id="btn-sv-open-external" class="btn-sv-tool" title="Open Mapillary / Satellite Real Panorama">🌐 360° Imagery</button>
-                <button id="btn-sv-step-prev" class="btn-sv-tool" title="Step Back Along Street">◀ Step</button>
-                <button id="btn-sv-step-next" class="btn-sv-tool" title="Step Forward Along Street">Step ▶</button>
-                <button id="btn-sv-close" class="btn-sv-close" title="Exit Street View">✕</button>
-            </div>
-        </div>
-        <div id="street-view-container" class="street-view-container">
-            <div id="street-view-pano" class="street-view-pano"></div>
-            <canvas id="street-view-canvas" class="street-view-canvas" style="display:none;"></canvas>
-            <div class="street-view-compass">
-                <div class="compass-dial" id="sv-compass-dial">
-                    <span>N</span>
-                </div>
-                <div class="drag-hint">↔ Drag to look around 360° | Step forward along street</div>
-            </div>
-        </div>
-    </div>
-
     <!-- Mobile Drawer Backdrop -->
     <div id="mobile-backdrop" class="mobile-backdrop" style="display:none;"></div>
 
     <!-- ==================== MOBILE / IN-CAR NAVIGATION HUD ==================== -->
     <div id="nav-hud" class="nav-hud">
-        <!-- Top-Center Camera & Dimension Mode Switcher -->
-        <div class="hud-view-switcher" id="hud-view-switcher">
-            <button class="view-switch-btn active" data-view="2d" title="2D Tactical Map">
-                <span>🗺️</span> 2D Map
-            </button>
-            <button class="view-switch-btn" data-view="3d" title="3D / 4D Perspective Driver View">
-                <span>🏎️</span> 3D / 4D
-            </button>
-            <button class="view-switch-btn" data-view="street" title="360° Street View Panorama">
-                <span>📷</span> Street View
-            </button>
-        </div>
-
         <!-- Top-Left Maneuver Card (hidden until route calculated) -->
         <div id="hud-turn-card" class="hud-card hud-turn-card hud-hidden">
             <div class="hud-turn-icon-wrap">
