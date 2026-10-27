@@ -350,30 +350,28 @@
             preferCanvas: true
         });
 
-        const darkLayer = L.tileLayer(CONFIG.TILE_DARK, {
-            subdomains: 'abcd', maxZoom: 19, attribution: '&copy; CARTO &copy; OpenStreetMap'
+        const tomtomLayer = L.tileLayer(CONFIG.TILE_TOMTOM, {
+            maxZoom: 19, attribution: '&copy; TomTom'
         });
         const osmLayer = L.tileLayer(CONFIG.TILE_OSM, {
             subdomains: 'abc', maxZoom: 19, attribution: '&copy; OpenStreetMap'
         });
-        const tomtomLayer = L.tileLayer(CONFIG.TILE_TOMTOM, {
-            maxZoom: 19, attribution: '&copy; TomTom'
-        });
 
         let fallbackDone = false;
-        darkLayer.on('tileerror', function () {
+        tomtomLayer.on('tileerror', function () {
             if (!fallbackDone && state.map) {
                 fallbackDone = true;
-                if (state.map.hasLayer(darkLayer)) {
-                    state.map.removeLayer(darkLayer);
+                if (state.map.hasLayer(tomtomLayer)) {
+                    state.map.removeLayer(tomtomLayer);
                     osmLayer.addTo(state.map);
                     state.tileLayer = osmLayer;
                 }
             }
         });
-        darkLayer.addTo(state.map);
-        state.tileLayer = darkLayer;
+        tomtomLayer.addTo(state.map);
+        state.tileLayer = tomtomLayer;
 
+        L.control.layers({ "TomTom": tomtomLayer, "Standard OSM": osmLayer }, null, { position: 'topleft' }).addTo(state.map);
         L.control.zoom({ position: 'topright' }).addTo(state.map);
         L.control.scale({ position: 'bottomleft', imperial: false }).addTo(state.map);
 
@@ -3090,17 +3088,15 @@
             if (m) m.style.display = 'none';
         });
 
-        // Map theme selector in settings
+        // Map theme selector in settings (TomTom & Standard OSM only)
         document.getElementById('select-map-theme')?.addEventListener('change', (e) => {
             const val = e.target.value;
             if (!state.map) return;
             if (state.tileLayer) state.map.removeLayer(state.tileLayer);
             if (val === 'standard') {
                 state.tileLayer = L.tileLayer(CONFIG.TILE_OSM, { subdomains: 'abc', maxZoom: 19 }).addTo(state.map);
-            } else if (val === 'tomtom') {
-                state.tileLayer = L.tileLayer(CONFIG.TILE_TOMTOM, { maxZoom: 19 }).addTo(state.map);
             } else {
-                state.tileLayer = L.tileLayer(CONFIG.TILE_DARK, { subdomains: 'abcd', maxZoom: 19 }).addTo(state.map);
+                state.tileLayer = L.tileLayer(CONFIG.TILE_TOMTOM, { maxZoom: 19 }).addTo(state.map);
             }
         });
 
