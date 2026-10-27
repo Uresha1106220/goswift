@@ -2019,7 +2019,17 @@
         }
     }
 
-    // === NAVIGATION ENGINE: Real GPS + Simulation Fallback ===
+    // === NAVIGATION ENGINE: True Real-Time GPS Navigation ===
+
+    function distanceInMeters(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                  Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
 
     function startDriveSimulation() {
         if (!state.routes.length) {
@@ -2036,95 +2046,161 @@
         state.navCoords = allCoords;
         state.navStartTime = Date.now();
         state.navTotalKm = route.distance_km;
+        state.lastGPS = null;
+        state.lastHeading = 0;
 
-        // Reveal the in-car HUD overlays and road markers for active driving
+        // Reveal the in-car HUD overlays
         showNavHUD();
-        renderRoadHUDMarkers(route, state.signals);
 
-        // Initialize signal timer properly
+        // Initial traffic signal countdown (28s green)
         state.hudSignalTimer = 28;
         state.hudSignalPhase = 'green';
 
         const driveBtn = document.getElementById('btn-hud-drive');
-        if (driveBtn) { driveBtn.innerHTML = '<span id="hud-drive-icon">⏸</span>'; driveBtn.classList.add('active'); }
+        if (driveBtn) {
+            driveBtn.innerHTML = '<span id="hud-drive-icon">⏸</span>';
+            driveBtn.classList.add('active');
+        }
 
-        // Switch dock label to "arrival"
         const lbl = document.getElementById('hud-stat-arrival-lbl');
         if (lbl) lbl.textContent = 'arrival';
 
-        showToast('🛰️ Navigation started — tracking location', 'success', 2500);
-
-        // Try real GPS first
-        if (navigator.geolocation) {
-            showToast('📍 Using real GPS location', 'info', 2000);
-            _startGPSNavigation(route, allCoords);
-        } else {
-            showToast('📱 GPS unavailable — running simulation', 'info', 2000);
-            _startSimulationNavigation(route, allCoords);
+        if (!navigator.geolocation) {
+            showToast('Geolocation is not supported by your browser', 'error', 3000);
+            return;
         }
 
-        // Start real-time signal countdown (every 1 second, independent of movement)
-        _startSignalCountdown();
+        showToast('📍 Acquiring live GPS position...', 'info', 2500);
 
-        // Start live arrival time updater (every 5 seconds)
-        _startArrivalUpdater(route);
+        // Start true real-time GPS navigation
+        _startLiveGPSNavigation(route, allCoords);
+
+        // Real-time signal phase countdown
+        _startSignalCountdown();
     }
 
-    function _startGPSNavigation(route, allCoords) {
-        // Clear any previous simulation
-        if (state.driveTimer) { clearInterval(state.driveTimer); state.driveTimer = null; }
-        if (state.gpsWatchId != null) { navigator.geolocation.clearWatch(state.gpsWatchId); }
+    function _startLiveGPSNavigation(route, allCoords) {
+        if (state.gpsWatchId != null) {
+            navigator.geolocation.clearWatch(state.gpsWatchId);
+            state.gpsWatchId = null;
+        }
 
-        let simFallbackTimer = null;
-        let gotRealGPS = false;
+        function handlePosition(pos) {
+            if (!state.isDriving) return;
 
-        // Fallback: if no GPS fix within 4s, switch to simulation
-        simFallbackTimer = setTimeout(() => {
-            if (!gotRealGPS) {
-                showToast('GPS fix failed — using simulation', 'warning', 2000);
-                _startSimulationNavigation(route, allCoords);
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            const now = Date.now();
+
+            // 1. Calculate actual real-world speed
+            let speedKmh = 0;
+            if (pos.coords.speed != null && !isNaN(pos.coords.speed) && pos.coords.speed > 0) {
+                speedKmh = Math.round(pos.coords.speed * 3.6);
+            } else if (state.lastGPS) {
+                const distM = distanceInMeters(state.lastGPS.lat, state.lastGPS.lng, lat, lng);
+                const dtSec = Math.max(0.5, (now - state.lastGPS.time) / 1000);
+                if (distM > 1 && dtSec < 15) {
+                    speedKmh = Math.round((distM / dtSec) * 3.6);
+                }
             }
-        }, 4000);
 
+            // 2. Real heading / bearing
+            let heading = 0;
+            if (pos.coords.heading != null && !isNaN(pos.coords.heading) && pos.coords.heading >= 0) {
+                heading = pos.coords.heading;
+            } else if (state.lastGPS) {
+                const movedDist = distanceInMeters(state.lastGPS.lat, state.lastGPS.lng, lat, lng);
+                if (movedDist >= 2) {
+                    heading = calculateBearing(state.lastGPS.lat, state.lastGPS.lng, lat, lng);
+                    state.lastHeading = heading;
+                } else if (state.lastHeading != null) {
+                    heading = state.lastHeading;
+                }
+            }
+
+            state.lastGPS = { lat, lng, time: now };
+
+            // 3. Move vehicle marker to user's real GPS position
+            if (!state.carMarker) {
+                state.carMarker = L.marker([lat, lng], {
+                    icon: createCarIcon(heading),
+                    zIndexOffset: 1000
+                }).addTo(state.map);
+            } else {
+                state.carMarker.setLatLng([lat, lng]);
+                state.carMarker.setIcon(createCarIcon(heading));
+            }
+
+            // Google Maps marker if active
+            if (state.usingGoogleMaps && state.googleMap && window.google) {
+                if (!state.googleCarMarker) {
+                    state.googleCarMarker = new google.maps.Marker({
+                        position: { lat, lng },
+                        map: state.googleMap,
+                        icon: {
+                            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
+                            scale: 6,
+                            fillColor: '#dc2626',
+                            fillOpacity: 1,
+                            strokeColor: '#ffffff',
+                            strokeWeight: 2,
+                            rotation: heading
+                        },
+                        zIndex: 9999
+                    });
+                } else {
+                    state.googleCarMarker.setPosition({ lat, lng });
+                    const icon = state.googleCarMarker.getIcon();
+                    if (icon) {
+                        icon.rotation = heading;
+                        state.googleCarMarker.setIcon(icon);
+                    }
+                }
+                state.googleMap.panTo({ lat, lng });
+            }
+
+            // 4. Smoothly follow user with camera
+            if (state.map) {
+                state.map.panTo([lat, lng], { animate: true, duration: 0.6 });
+            }
+
+            // 5. Update real speedometer
+            updateSpeedometer(speedKmh);
+
+            // 6. Find closest point on route to compute progress
+            const closestIdx = _snapToRoute(lat, lng, allCoords);
+            state.driveProgressIndex = closestIdx;
+
+            // 7. Calculate exact remaining distance along route from user's current GPS position
+            let remMeters = distanceInMeters(lat, lng, allCoords[closestIdx][0], allCoords[closestIdx][1]);
+            for (let i = closestIdx; i < allCoords.length - 1; i++) {
+                remMeters += distanceInMeters(allCoords[i][0], allCoords[i][1], allCoords[i + 1][0], allCoords[i + 1][1]);
+            }
+            const remKm = Math.max(0, remMeters / 1000);
+
+            // 8. Update turn-by-turn guidance and ETA stats
+            _updateLiveTurnAndStats(lat, lng, closestIdx, allCoords, remKm, route, speedKmh);
+        }
+
+        function handleError(err) {
+            console.warn('[GoSwift] Geolocation watch note:', err.message);
+            if (err.code === 1) {
+                showToast('📍 Location permission required for live navigation. Please allow GPS.', 'warning', 4000);
+            }
+        }
+
+        // Fast immediate initial fix from device
+        navigator.geolocation.getCurrentPosition(
+            (pos) => handlePosition(pos),
+            (err) => handleError(err),
+            { enableHighAccuracy: false, timeout: 8000, maximumAge: 30000 }
+        );
+
+        // Continuous high-precision real-time GPS streaming as user moves
         state.gpsWatchId = navigator.geolocation.watchPosition(
-            (pos) => {
-                gotRealGPS = true;
-                clearTimeout(simFallbackTimer);
-
-                const lat = pos.coords.latitude;
-                const lng = pos.coords.longitude;
-                const speedMs = pos.coords.speed || 0;
-                const speedKmh = Math.round(speedMs * 3.6);
-                const heading = pos.coords.heading || 0;
-
-                // Move car marker to real GPS position
-                if (state.carMarker) {
-                    state.carMarker.setLatLng([lat, lng]);
-                    state.carMarker.setIcon(createCarIcon(heading));
-                }
-
-                // Pan map to follow
-                if (state.map) {
-                    state.map.panTo([lat, lng], { animate: true, duration: 0.5 });
-                }
-
-                // Update speedometer from real GPS speed
-                updateSpeedometer(speedKmh > 0 ? speedKmh : 0);
-
-                // Snap to nearest route coord to compute progress
-                const snapIdx = _snapToRoute(lat, lng, allCoords);
-                const progressRatio = snapIdx / allCoords.length;
-                const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
-
-                _updateNavStats(remKm, route);
-            },
-            (err) => {
-                clearTimeout(simFallbackTimer);
-                console.warn('[GoSwift] GPS error:', err.message);
-                showToast('GPS unavailable — switching to simulation', 'warning', 2000);
-                _startSimulationNavigation(route, allCoords);
-            },
-            { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+            handlePosition,
+            handleError,
+            { enableHighAccuracy: true, maximumAge: 1000, timeout: 25000 }
         );
     }
 
@@ -2137,52 +2213,65 @@
         return best;
     }
 
-    function _startSimulationNavigation(route, allCoords) {
-        if (state.driveTimer) clearInterval(state.driveTimer);
+    function _updateLiveTurnAndStats(lat, lng, closestIdx, allCoords, remKm, route, speedKmh) {
+        // Distance to destination
+        const statDist = document.getElementById('hud-stat-dist');
+        if (statDist) statDist.textContent = remKm < 10 ? remKm.toFixed(1) : Math.round(remKm);
 
-        let coordIdx = state.driveProgressIndex || 0;
-        const total = allCoords.length;
+        // Dynamic arrival time and remaining minutes based on real movement or average route pace
+        const effectiveSpeed = speedKmh > 5 ? speedKmh : 32; // urban average 32 km/h when stopped
+        const remMinutes = Math.max(1, Math.round((remKm / effectiveSpeed) * 60));
 
-        state.driveTimer = setInterval(() => {
-            if (!state.isDriving) return;
+        const statTime = document.getElementById('hud-stat-time');
+        if (statTime) statTime.textContent = remMinutes;
 
-            coordIdx = (coordIdx + 1) % total;
-            state.driveProgressIndex = coordIdx;
+        const statArrival = document.getElementById('hud-stat-arrival');
+        if (statArrival) {
+            const arr = new Date(Date.now() + remMinutes * 60000);
+            statArrival.textContent = arr.getHours().toString().padStart(2, '0') + ':' +
+                                      arr.getMinutes().toString().padStart(2, '0');
+        }
 
-            const curr = allCoords[coordIdx];
-            const next = allCoords[Math.min(coordIdx + 1, total - 1)];
-            const bearing = calculateBearing(curr[0], curr[1], next[0], next[1]);
+        // Find upcoming significant turn ahead of current position
+        let turnDistMeters = 0;
+        let turnStreet = state.destination?.label ? state.destination.label.split(',')[0] : 'Destination';
+        let turnArrow = '↑';
 
-            // Move car marker
-            if (state.carMarker) {
-                state.carMarker.setLatLng([curr[0], curr[1]]);
-                state.carMarker.setIcon(createCarIcon(bearing));
+        // Scan ahead on route for turn
+        if (closestIdx < allCoords.length - 2) {
+            for (let i = closestIdx; i < Math.min(closestIdx + 30, allCoords.length - 2); i++) {
+                turnDistMeters += distanceInMeters(allCoords[i][0], allCoords[i][1], allCoords[i + 1][0], allCoords[i + 1][1]);
+                const b1 = calculateBearing(allCoords[i][0], allCoords[i][1], allCoords[i + 1][0], allCoords[i + 1][1]);
+                const b2 = calculateBearing(allCoords[i + 1][0], allCoords[i + 1][1], allCoords[i + 2][0], allCoords[i + 2][1]);
+                let diff = (b2 - b1 + 360) % 360;
+                if (diff > 180) diff -= 360;
+
+                if (Math.abs(diff) > 35) { // sharp bend or turn
+                    turnArrow = diff > 0 ? '↱' : '↰';
+                    break;
+                }
             }
+        }
 
-            // Pan map every 4 steps
-            if (coordIdx % 4 === 0 && state.map) {
-                state.map.panTo([curr[0], curr[1]], { animate: true, duration: 0.4 });
+        const turnDistEl = document.getElementById('hud-turn-dist');
+        if (turnDistEl) {
+            if (turnDistMeters >= 1000) {
+                turnDistEl.innerHTML = (turnDistMeters / 1000).toFixed(1) + ' <span class="unit">km</span>';
+            } else {
+                turnDistEl.innerHTML = Math.max(20, Math.round(turnDistMeters)) + ' <span class="unit">m</span>';
             }
+        }
 
-            // Simulate speed (slow near signal, variable otherwise)
-            const progressRatio = coordIdx / total;
-            const nearSignal = Math.abs(progressRatio - 0.45) < 0.08;
-            const simSpeed = nearSignal
-                ? (state.hudSignalPhase === 'red' ? 0 : 22)
-                : (42 + Math.round(Math.sin(coordIdx * 0.3) * 10));
-            updateSpeedometer(simSpeed);
+        const turnStreetEl = document.getElementById('hud-turn-street');
+        if (turnStreetEl) turnStreetEl.textContent = turnStreet;
 
-            // Update remaining distance
-            const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
-            _updateNavStats(remKm, route);
-
-        }, 150);
+        const turnIconEl = document.getElementById('hud-turn-icon');
+        if (turnIconEl) turnIconEl.textContent = turnArrow;
     }
 
     function _startSignalCountdown() {
         if (state.signalCountdownTimer) clearInterval(state.signalCountdownTimer);
 
-        // Set initial timer
         if (!state.hudSignalTimer || state.hudSignalTimer <= 0) {
             state.hudSignalTimer = 28;
             state.hudSignalPhase = 'green';
@@ -2193,12 +2282,11 @@
 
             state.hudSignalTimer--;
             if (state.hudSignalTimer <= 0) {
-                // Toggle phase: green->red->green with realistic timings
                 state.hudSignalPhase = state.hudSignalPhase === 'green' ? 'red' : 'green';
                 state.hudSignalTimer = state.hudSignalPhase === 'green' ? 28 : 18;
             }
 
-            // Update ONLY the center HUD signal circle (remove road pill duplicate)
+            // Update center HUD signal circle
             const circle = document.getElementById('hud-signal-circle');
             if (circle) {
                 circle.textContent = state.hudSignalTimer;
@@ -2219,45 +2307,6 @@
                 }
             });
         }, 1000);
-    }
-
-    function _startArrivalUpdater(route) {
-        if (state.arrivalTimer) clearInterval(state.arrivalTimer);
-
-        state.arrivalTimer = setInterval(() => {
-            if (!state.isDriving) return;
-
-            // Recalculate ETA based on elapsed time and remaining progress
-            const elapsed = (Date.now() - state.navStartTime) / 1000;
-            const progressRatio = state.driveProgressIndex / (state.navCoords ? state.navCoords.length : 1);
-            const remKm = Math.max(0, route.distance_km * (1 - progressRatio));
-            const avgSpeedKmh = Math.max(10, state.currentSpeed || 40);
-            const remSec = (remKm / avgSpeedKmh) * 3600;
-            const remMin = Math.round(remSec / 60);
-
-            const statTime = document.getElementById('hud-stat-time');
-            const statArrival = document.getElementById('hud-stat-arrival');
-
-            if (statTime) statTime.textContent = remMin > 0 ? remMin : '< 1';
-
-            if (statArrival) {
-                const arr = new Date(Date.now() + remSec * 1000);
-                statArrival.textContent = arr.getHours().toString().padStart(2, '0') + ':' +
-                                          arr.getMinutes().toString().padStart(2, '0');
-            }
-        }, 5000);
-    }
-
-    function _updateNavStats(remKm, route) {
-        const statDist = document.getElementById('hud-stat-dist');
-        if (statDist) statDist.textContent = remKm.toFixed(1);
-
-        const turnDistEl = document.getElementById('hud-turn-dist');
-        if (turnDistEl) {
-            const d = remKm * 0.6;
-            if (d >= 1) turnDistEl.innerHTML = d.toFixed(1) + ' <span class="unit">km</span>';
-            else turnDistEl.innerHTML = Math.max(50, Math.round(d * 1000)) + ' <span class="unit">m</span>';
-        }
     }
 
     function pauseDriveSimulation() {
